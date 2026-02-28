@@ -1,0 +1,2 @@
+SHOW TAGS;
+SHOW TAGS IN my_source;

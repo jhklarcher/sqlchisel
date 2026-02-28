@@ -1,4 +1,6 @@
-use sqlparser::ast::{Expr, Function, Join, JoinOperator, TableFactor, TableWithJoins};
+use sqlparser::ast::{
+    Expr, Function, Join, JoinOperator, ObjectNamePart, TableFactor, TableWithJoins,
+};
 
 use crate::config::FormatterConfig;
 use crate::format::doc::Doc;
@@ -80,6 +82,7 @@ fn format_table_factor(
             lateral,
             subquery,
             alias,
+            ..
         } => {
             let mut parts = Vec::new();
             if *lateral {
@@ -144,7 +147,7 @@ fn format_function_invocation(
 ) -> Doc {
     let mut name = func.name.clone();
     if name.0.len() == 1 {
-        if let Some(ident) = name.0.first_mut() {
+        if let Some(ObjectNamePart::Identifier(ident)) = name.0.first_mut() {
             if ident.quote_style.is_none() {
                 ident.value = super::apply_keyword_case(&ident.value, cfg);
             }
@@ -223,10 +226,13 @@ fn table_factor_alias_str(factor: &TableFactor) -> Option<String> {
         | TableFactor::TableFunction { alias, .. }
         | TableFactor::UNNEST { alias, .. }
         | TableFactor::JsonTable { alias, .. }
+        | TableFactor::OpenJsonTable { alias, .. }
         | TableFactor::NestedJoin { alias, .. }
         | TableFactor::Pivot { alias, .. }
         | TableFactor::Unpivot { alias, .. }
-        | TableFactor::MatchRecognize { alias, .. } => alias.as_ref().map(|a| a.to_string()),
+        | TableFactor::MatchRecognize { alias, .. }
+        | TableFactor::XmlTable { alias, .. }
+        | TableFactor::SemanticView { alias, .. } => alias.as_ref().map(|a| a.to_string()),
     }
 }
 
@@ -236,21 +242,27 @@ fn format_join(
     alias_tracker: &mut super::RelationAliasTracker,
 ) -> Doc {
     let (prefix, constraint, asof_match) = match &join.join_operator {
+        JoinOperator::Join(constraint) => ("INNER JOIN", Some(constraint), None),
         JoinOperator::Inner(constraint) => ("INNER JOIN", Some(constraint), None),
+        JoinOperator::Left(constraint) => ("LEFT JOIN", Some(constraint), None),
         JoinOperator::LeftOuter(constraint) => ("LEFT JOIN", Some(constraint), None),
+        JoinOperator::Right(constraint) => ("RIGHT JOIN", Some(constraint), None),
         JoinOperator::RightOuter(constraint) => ("RIGHT JOIN", Some(constraint), None),
         JoinOperator::FullOuter(constraint) => ("FULL JOIN", Some(constraint), None),
+        JoinOperator::Semi(constraint) => ("SEMI JOIN", Some(constraint), None),
         JoinOperator::LeftSemi(constraint) => ("LEFT SEMI JOIN", Some(constraint), None),
         JoinOperator::RightSemi(constraint) => ("RIGHT SEMI JOIN", Some(constraint), None),
+        JoinOperator::Anti(constraint) => ("ANTI JOIN", Some(constraint), None),
         JoinOperator::LeftAnti(constraint) => ("LEFT ANTI JOIN", Some(constraint), None),
         JoinOperator::RightAnti(constraint) => ("RIGHT ANTI JOIN", Some(constraint), None),
-        JoinOperator::CrossJoin => ("CROSS JOIN", None, None),
+        JoinOperator::CrossJoin(constraint) => ("CROSS JOIN", Some(constraint), None),
         JoinOperator::CrossApply => ("CROSS APPLY", None, None),
         JoinOperator::OuterApply => ("OUTER APPLY", None, None),
         JoinOperator::AsOf {
             match_condition,
             constraint,
         } => ("ASOF JOIN", Some(constraint), Some(match_condition)),
+        JoinOperator::StraightJoin(constraint) => ("STRAIGHT_JOIN", Some(constraint), None),
     };
 
     let natural_prefix = matches!(constraint, Some(sqlparser::ast::JoinConstraint::Natural))

@@ -1,5 +1,8 @@
 use anyhow::Result;
-use sqlparser::ast::{Cte, GroupByExpr, Query, SelectItem, SetExpr, Values, With};
+use sqlparser::ast::{
+    Cte, GroupByExpr, LimitClause, OrderByKind, Query, Select, SelectFlavor, SelectItem, SetExpr,
+    Values, With,
+};
 
 use crate::config::FormatterConfig;
 use crate::format::doc::Doc;
@@ -21,6 +24,10 @@ pub(super) fn format_query_with_layout_preference(
     alias_tracker: &mut super::RelationAliasTracker,
     prefer_multiline: bool,
 ) -> Result<Doc> {
+    if query_needs_safe_fallback(query) {
+        return Ok(Doc::Text(query.to_string()));
+    }
+
     let mut parts = Vec::new();
 
     if let Some(with) = &query.with {
@@ -75,17 +82,25 @@ pub(super) fn format_query_with_layout_preference(
             }
 
             match &select.group_by {
-                GroupByExpr::All => {
+                GroupByExpr::All(modifiers) => {
                     parts.push(Doc::Line);
-                    parts.push(Doc::Text("GROUP BY ALL".into()));
-                }
-                GroupByExpr::Expressions(exprs) if !exprs.is_empty() => {
-                    let exprs = exprs.iter().map(|e| e.to_string()).collect::<Vec<_>>();
-                    parts.push(Doc::Line);
-                    if exprs.len() > 1 {
-                        parts.push(super::format_comma_clause_per_line("GROUP BY", exprs, cfg));
+                    if modifiers.is_empty() {
+                        parts.push(Doc::Text("GROUP BY ALL".into()));
                     } else {
-                        parts.push(super::format_comma_clause("GROUP BY", exprs, cfg));
+                        parts.push(Doc::Text(select.group_by.to_string()));
+                    }
+                }
+                GroupByExpr::Expressions(exprs, modifiers) if !exprs.is_empty() => {
+                    parts.push(Doc::Line);
+                    if modifiers.is_empty() {
+                        let exprs = exprs.iter().map(|e| e.to_string()).collect::<Vec<_>>();
+                        if exprs.len() > 1 {
+                            parts.push(super::format_comma_clause_per_line("GROUP BY", exprs, cfg));
+                        } else {
+                            parts.push(super::format_comma_clause("GROUP BY", exprs, cfg));
+                        }
+                    } else {
+                        parts.push(Doc::Text(select.group_by.to_string()));
                     }
                 }
                 _ => {}
@@ -99,6 +114,66 @@ pub(super) fn format_query_with_layout_preference(
                     cfg,
                     alias_tracker,
                 ));
+            }
+
+            if !select.cluster_by.is_empty() {
+                let items = select
+                    .cluster_by
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>();
+                parts.push(Doc::Line);
+                parts.push(super::format_comma_clause("CLUSTER BY", items, cfg));
+            }
+
+            if !select.distribute_by.is_empty() {
+                let items = select
+                    .distribute_by
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>();
+                parts.push(Doc::Line);
+                parts.push(super::format_comma_clause("DISTRIBUTE BY", items, cfg));
+            }
+
+            if !select.sort_by.is_empty() {
+                let items = select
+                    .sort_by
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>();
+                parts.push(Doc::Line);
+                parts.push(super::format_comma_clause("SORT BY", items, cfg));
+            }
+
+            if select.window_before_qualify {
+                if !select.named_window.is_empty() {
+                    parts.push(Doc::Line);
+                    parts.push(format_window_clause(&select.named_window, cfg));
+                }
+                if let Some(qualify) = &select.qualify {
+                    parts.push(Doc::Line);
+                    parts.push(super::format_boolean_clause(
+                        "QUALIFY",
+                        qualify,
+                        cfg,
+                        alias_tracker,
+                    ));
+                }
+            } else {
+                if let Some(qualify) = &select.qualify {
+                    parts.push(Doc::Line);
+                    parts.push(super::format_boolean_clause(
+                        "QUALIFY",
+                        qualify,
+                        cfg,
+                        alias_tracker,
+                    ));
+                }
+                if !select.named_window.is_empty() {
+                    parts.push(Doc::Line);
+                    parts.push(format_window_clause(&select.named_window, cfg));
+                }
             }
 
             append_query_tail(&mut parts, query, cfg);
@@ -136,31 +211,84 @@ pub(super) fn format_query_with_layout_preference(
 }
 
 fn append_query_tail(parts: &mut Vec<Doc>, query: &Query, cfg: &FormatterConfig) {
-    if !query.order_by.is_empty() {
-        let order: Vec<String> = query.order_by.iter().map(|o| o.to_string()).collect();
+    if let Some(order_by) = &query.order_by {
         parts.push(Doc::Line);
-        parts.push(super::format_comma_clause("ORDER BY", order, cfg));
+        if order_by.interpolate.is_none() {
+            match &order_by.kind {
+                OrderByKind::Expressions(exprs) => {
+                    let order: Vec<String> = exprs.iter().map(|o| o.to_string()).collect();
+                    parts.push(super::format_comma_clause("ORDER BY", order, cfg));
+                }
+                OrderByKind::All(_) => parts.push(Doc::Text(order_by.to_string())),
+            }
+        } else {
+            parts.push(Doc::Text(order_by.to_string()));
+        }
     }
 
-    if let Some(limit) = &query.limit {
-        parts.push(Doc::Line);
-        parts.push(Doc::Text(format!(
-            "{} {}",
-            super::apply_keyword_case("LIMIT", cfg),
-            limit
-        )));
+    if let Some(limit_clause) = &query.limit_clause {
+        match limit_clause {
+            LimitClause::LimitOffset {
+                limit,
+                offset,
+                limit_by,
+            } => {
+                if let Some(limit) = limit {
+                    parts.push(Doc::Line);
+                    parts.push(Doc::Text(format!(
+                        "{} {}",
+                        super::apply_keyword_case("LIMIT", cfg),
+                        limit
+                    )));
+                }
+
+                if let Some(offset) = offset {
+                    parts.push(Doc::Line);
+                    let offset_str = offset.to_string();
+                    let rendered = offset_str
+                        .strip_prefix("OFFSET ")
+                        .map(|rest| format!("{} {rest}", super::apply_keyword_case("OFFSET", cfg)))
+                        .unwrap_or_else(|| {
+                            format!("{} {offset_str}", super::apply_keyword_case("OFFSET", cfg))
+                        });
+                    parts.push(Doc::Text(rendered));
+                }
+
+                if !limit_by.is_empty() {
+                    let items = limit_by
+                        .iter()
+                        .map(|expr| expr.to_string())
+                        .collect::<Vec<_>>();
+                    parts.push(Doc::Line);
+                    parts.push(super::format_comma_clause("BY", items, cfg));
+                }
+            }
+            LimitClause::OffsetCommaLimit { .. } => {
+                parts.push(Doc::Line);
+                parts.push(Doc::Text(limit_clause.to_string().trim().to_string()));
+            }
+        }
     }
 
-    if let Some(offset) = &query.offset {
+    if let Some(fetch) = &query.fetch {
         parts.push(Doc::Line);
-        let offset_str = offset.to_string();
-        let rendered = offset_str
-            .strip_prefix("OFFSET ")
-            .map(|rest| format!("{} {rest}", super::apply_keyword_case("OFFSET", cfg)))
-            .unwrap_or_else(|| {
-                format!("{} {offset_str}", super::apply_keyword_case("OFFSET", cfg))
-            });
-        parts.push(Doc::Text(rendered));
+        parts.push(Doc::Text(fetch.to_string()));
+    }
+
+    if !query.locks.is_empty() {
+        parts.push(Doc::Line);
+        let lock_text = query
+            .locks
+            .iter()
+            .map(|lock| lock.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        parts.push(Doc::Text(lock_text));
+    }
+
+    if let Some(for_clause) = &query.for_clause {
+        parts.push(Doc::Line);
+        parts.push(Doc::Text(for_clause.to_string()));
     }
 }
 
@@ -256,4 +384,41 @@ fn format_cte(
     }
 
     Ok(Doc::Group(parts))
+}
+
+fn format_window_clause(
+    windows: &[sqlparser::ast::NamedWindowDefinition],
+    cfg: &FormatterConfig,
+) -> Doc {
+    let items = windows
+        .iter()
+        .map(|window| window.to_string())
+        .collect::<Vec<_>>();
+    super::format_comma_clause("WINDOW", items, cfg)
+}
+
+fn query_needs_safe_fallback(query: &Query) -> bool {
+    if query.settings.is_some() || query.format_clause.is_some() || !query.pipe_operators.is_empty()
+    {
+        return true;
+    }
+
+    match query.body.as_ref() {
+        SetExpr::Select(select) => select_needs_safe_fallback(select),
+        SetExpr::Query(inner) => query_needs_safe_fallback(inner),
+        _ => false,
+    }
+}
+
+fn select_needs_safe_fallback(select: &Select) -> bool {
+    select.top.is_some()
+        || select.optimizer_hint.is_some()
+        || select.select_modifiers.is_some()
+        || select.exclude.is_some()
+        || select.into.is_some()
+        || !select.lateral_views.is_empty()
+        || select.prewhere.is_some()
+        || select.value_table_mode.is_some()
+        || !select.connect_by.is_empty()
+        || !matches!(select.flavor, SelectFlavor::Standard)
 }

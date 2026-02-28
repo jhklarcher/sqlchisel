@@ -1,0 +1,2 @@
+SHOW BRANCHES;
+SHOW BRANCHES IN my_source;

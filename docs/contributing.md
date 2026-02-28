@@ -24,6 +24,11 @@ This guide covers day-to-day development practices for `sqlchisel`.
 - Keep `docs/repo-cleanup-checklist.md` updated while the docs/module split effort is in progress.
 - Prefer using `--format`, `--check`, or `--write` locally to mirror user workflows.
 - For Dremio work, add parser + formatter coverage and tests together.
+- For Dremio syntax additions, update all four together:
+  - `fixtures/dremio/reference-commands/`
+  - parser tests (`src/parser.rs`)
+  - formatter tests (`src/format/sql/mod.rs`)
+  - `docs/dremio-support-matrix.md`
 
 ## Code Style
 

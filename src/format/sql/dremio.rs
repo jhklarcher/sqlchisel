@@ -73,7 +73,9 @@ pub(super) fn format_dremio_command(cmd: &DremioCommand, cfg: &FormatterConfig) 
         Pipe { verb, rest } => format_pipe(verb, rest, cfg),
         TableMaintenance { verb, rest } => {
             if verb.eq_ignore_ascii_case("COPY INTO TABLE") {
-                format_copy_into(rest, cfg)
+                format_copy_into(rest, true, cfg)
+            } else if verb.eq_ignore_ascii_case("COPY INTO") {
+                format_copy_into(rest, false, cfg)
             } else {
                 format_optimize_or_vacuum(rest, verb, cfg)
             }
@@ -109,6 +111,10 @@ pub(super) fn format_dremio_command(cmd: &DremioCommand, cfg: &FormatterConfig) 
             format_command_with_rest(&["ROW", "COLUMN", "POLICIES"], rest, cfg, false)
         }
         QueueTag { verb, kind, rest } => format_command_with_rest(&[verb, kind], rest, cfg, false),
+        Generic { head, rest } => {
+            let parts = head.iter().map(String::as_str).collect::<Vec<_>>();
+            format_command_with_rest(&parts, rest, cfg, false)
+        }
     }
 }
 
@@ -174,18 +180,20 @@ fn format_alter_pds(rest: &str, cfg: &FormatterConfig) -> Doc {
     format_command_with_rest(&["ALTER", "PDS"], rest, cfg, false)
 }
 
-fn format_copy_into(rest: &str, cfg: &FormatterConfig) -> Doc {
+fn format_copy_into(rest: &str, with_table_keyword: bool, cfg: &FormatterConfig) -> Doc {
     // Copy Into can have USING/WITH options; break into target / using / with blocks.
     let rest = rest.trim();
+    let head = if with_table_keyword {
+        "COPY INTO TABLE"
+    } else {
+        "COPY INTO"
+    };
     if rest.is_empty() {
-        return Doc::Text(apply_keyword_case("COPY INTO TABLE", cfg));
+        return Doc::Text(apply_keyword_case(head, cfg));
     }
 
     let (target, using_block, with_block) = split_copy_into_parts(rest);
-    let mut parts = vec![
-        Doc::Text(apply_keyword_case("COPY INTO TABLE", cfg)),
-        Doc::Line,
-    ];
+    let mut parts = vec![Doc::Text(apply_keyword_case(head, cfg)), Doc::Line];
     parts.push(Doc::Indent(Box::new(Doc::Text(target.to_string()))));
 
     if let Some(using) = using_block {

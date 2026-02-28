@@ -17,6 +17,7 @@ pub(super) fn format_expr(
             expr,
             data_type,
             format,
+            ..
         } => super::format_cast_expr(
             kind,
             expr,
@@ -26,7 +27,7 @@ pub(super) fn format_expr(
             cfg,
             alias_tracker,
         ),
-        Expr::TypedString { data_type, value } => super::format_typed_string(data_type, value, cfg),
+        Expr::TypedString(typed) => super::format_typed_string(typed, cfg),
         Expr::Interval(interval) => {
             super::format_interval_expr(interval, inline_limit, cfg, alias_tracker)
         }
@@ -98,12 +99,11 @@ pub(super) fn format_expr(
         Expr::Case {
             operand,
             conditions,
-            results,
             else_result,
+            ..
         } => super::case::format_case(
             operand.as_deref(),
             conditions,
-            results,
             else_result,
             inline_limit,
             cfg,
@@ -173,15 +173,16 @@ fn contains_logical_ops(expr: &Expr) -> bool {
         Expr::Case {
             operand,
             conditions,
-            results,
             else_result,
+            ..
         } => {
             operand
                 .as_deref()
                 .map(contains_logical_ops)
                 .unwrap_or(false)
-                || conditions.iter().any(contains_logical_ops)
-                || results.iter().any(contains_logical_ops)
+                || conditions.iter().any(|branch| {
+                    contains_logical_ops(&branch.condition) || contains_logical_ops(&branch.result)
+                })
                 || else_result
                     .as_deref()
                     .map(contains_logical_ops)

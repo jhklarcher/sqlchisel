@@ -1,0 +1,2 @@
+ROLLBACK TABLE my_space.my_table TO SNAPSHOT '123';
+ROLLBACK TABLE my_space.my_table TO TIMESTAMP '2024-01-01 00:00:00';
