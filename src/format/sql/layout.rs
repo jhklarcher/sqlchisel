@@ -60,18 +60,24 @@ fn estimate_projection_length(items: &[SelectItem]) -> usize {
 
 fn join_prefix_len(join: &Join) -> usize {
     let (prefix, constraint) = match &join.join_operator {
+        JoinOperator::Join(constraint) => ("INNER JOIN", Some(constraint)),
         JoinOperator::Inner(constraint) => ("INNER JOIN", Some(constraint)),
+        JoinOperator::Left(constraint) => ("LEFT JOIN", Some(constraint)),
         JoinOperator::LeftOuter(constraint) => ("LEFT JOIN", Some(constraint)),
+        JoinOperator::Right(constraint) => ("RIGHT JOIN", Some(constraint)),
         JoinOperator::RightOuter(constraint) => ("RIGHT JOIN", Some(constraint)),
         JoinOperator::FullOuter(constraint) => ("FULL JOIN", Some(constraint)),
+        JoinOperator::Semi(constraint) => ("SEMI JOIN", Some(constraint)),
         JoinOperator::LeftSemi(constraint) => ("LEFT SEMI JOIN", Some(constraint)),
         JoinOperator::RightSemi(constraint) => ("RIGHT SEMI JOIN", Some(constraint)),
+        JoinOperator::Anti(constraint) => ("ANTI JOIN", Some(constraint)),
         JoinOperator::LeftAnti(constraint) => ("LEFT ANTI JOIN", Some(constraint)),
         JoinOperator::RightAnti(constraint) => ("RIGHT ANTI JOIN", Some(constraint)),
-        JoinOperator::CrossJoin => ("CROSS JOIN", None),
+        JoinOperator::CrossJoin(constraint) => ("CROSS JOIN", Some(constraint)),
         JoinOperator::CrossApply => ("CROSS APPLY", None),
         JoinOperator::OuterApply => ("OUTER APPLY", None),
         JoinOperator::AsOf { .. } => ("ASOF JOIN", None),
+        JoinOperator::StraightJoin(constraint) => ("STRAIGHT_JOIN", Some(constraint)),
     };
 
     let natural_len = matches!(constraint, Some(sqlparser::ast::JoinConstraint::Natural))
