@@ -1,0 +1,2 @@
+RESET QUEUE;
+RESET QUEUE my_queue;

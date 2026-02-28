@@ -1,0 +1,2 @@
+ALTER SOURCE my_source REFRESH STATUS;
+SHOW BRANCHES IN my_source;

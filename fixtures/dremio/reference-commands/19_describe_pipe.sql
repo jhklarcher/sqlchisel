@@ -1,0 +1,2 @@
+DESCRIBE PIPE my_pipe;
+DESCRIBE PIPE my_pipe2;
