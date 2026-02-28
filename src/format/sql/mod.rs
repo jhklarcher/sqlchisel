@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use sqlparser::ast::{
     ArrayElemTypeDef, CastFormat, CastKind, ColumnDef, CreateTableOptions, DataType, DateTimeField,
-    Expr, Function, GroupByExpr, HiveDistributionStyle, HiveFormat, Ident, Insert, Interval,
-    ObjectName, OrderByExpr, Query, Select, SetExpr, Statement, TableConstraint, TableFactor,
-    TableWithJoins, Value, ViewColumnDef, WindowFrame, WindowSpec, WindowType,
+    Expr, Function, GroupByExpr, HiveDistributionStyle, HiveFormat, Insert, Interval, ObjectName,
+    ObjectNamePart, OneOrManyWithParens, OrderByExpr, Query, Select, SetExpr, Statement,
+    TableConstraint, TableFactor, TableWithJoins, TypedString, Value, ValueWithSpan, ViewColumnDef,
+    WindowFrame, WindowSpec, WindowType, WrappedCollection,
 };
 use sqlparser::dialect::{AnsiDialect, Dialect, GenericDialect};
 
@@ -136,143 +137,165 @@ fn format_statement(
 ) -> Result<Doc> {
     match stmt {
         Statement::Query(query) => format_query(query, cfg, version, alias_tracker),
-        Statement::CreateTable {
-            name,
-            columns,
-            constraints,
-            if_not_exists,
-            or_replace,
-            temporary,
-            external,
-            global,
-            hive_distribution,
-            hive_formats,
-            table_properties,
-            with_options,
-            file_format,
-            location,
-            query,
-            like,
-            clone,
-            engine,
-            comment,
-            default_charset,
-            collation,
-            on_commit,
-            on_cluster,
-            options,
-            order_by,
-            partition_by,
-            cluster_by,
-            auto_increment_offset,
-            strict,
-            ..
-        } => {
-            let simple_layout = query.is_none()
-                && like.is_none()
-                && clone.is_none()
-                && with_options.is_empty()
-                && table_properties.is_empty()
-                && file_format.is_none()
-                && location.is_none()
-                && engine.is_none()
-                && comment.is_none()
-                && default_charset.is_none()
-                && collation.is_none()
-                && on_commit.is_none()
-                && on_cluster.is_none()
-                && auto_increment_offset.is_none()
-                && options.as_ref().is_none_or(|v| v.is_empty())
-                && order_by.as_ref().is_none_or(|v| v.is_empty())
-                && partition_by.is_none()
-                && cluster_by.as_ref().is_none_or(|v| v.is_empty())
-                && matches!(hive_distribution, HiveDistributionStyle::NONE)
-                && hive_formats.as_ref().is_none_or(hive_format_is_empty)
-                && !*strict;
+        Statement::CreateTable(create_table) => {
+            let simple_layout = create_table.query.is_none()
+                && create_table.like.is_none()
+                && create_table.clone.is_none()
+                && create_table.version.is_none()
+                && matches!(create_table.table_options, CreateTableOptions::None)
+                && create_table.file_format.is_none()
+                && create_table.location.is_none()
+                && create_table.comment.is_none()
+                && create_table.on_commit.is_none()
+                && create_table.on_cluster.is_none()
+                && create_table.primary_key.is_none()
+                && create_table.order_by.is_none()
+                && create_table.partition_by.is_none()
+                && create_table.cluster_by.is_none()
+                && create_table.clustered_by.is_none()
+                && create_table.inherits.is_none()
+                && create_table.partition_of.is_none()
+                && create_table.for_values.is_none()
+                && matches!(create_table.hive_distribution, HiveDistributionStyle::NONE)
+                && create_table
+                    .hive_formats
+                    .as_ref()
+                    .is_none_or(hive_format_is_empty)
+                && !create_table.without_rowid
+                && !create_table.copy_grants
+                && !create_table.strict
+                && !create_table.dynamic
+                && !create_table.transient
+                && !create_table.volatile
+                && !create_table.iceberg
+                && create_table.enable_schema_evolution.is_none()
+                && create_table.change_tracking.is_none()
+                && create_table.data_retention_time_in_days.is_none()
+                && create_table.max_data_extension_time_in_days.is_none()
+                && create_table.default_ddl_collation.is_none()
+                && create_table.with_aggregation_policy.is_none()
+                && create_table.with_row_access_policy.is_none()
+                && create_table.with_tags.is_none()
+                && create_table.external_volume.is_none()
+                && create_table.base_location.is_none()
+                && create_table.catalog.is_none()
+                && create_table.catalog_sync.is_none()
+                && create_table.storage_serialization_policy.is_none()
+                && create_table.target_lag.is_none()
+                && create_table.warehouse.is_none()
+                && create_table.refresh_mode.is_none()
+                && create_table.initialize.is_none()
+                && !create_table.require_user;
 
-            let can_format_ctas = query.is_some()
-                && like.is_none()
-                && clone.is_none()
-                && with_options.is_empty()
-                && table_properties.is_empty()
-                && file_format.is_none()
-                && location.is_none()
-                && engine.is_none()
-                && comment.is_none()
-                && default_charset.is_none()
-                && collation.is_none()
-                && on_commit.is_none()
-                && on_cluster.is_none()
-                && auto_increment_offset.is_none()
-                && options.as_ref().is_none_or(|v| v.is_empty())
-                && matches!(hive_distribution, HiveDistributionStyle::NONE)
-                && hive_formats.as_ref().is_none_or(hive_format_is_empty)
-                && !*strict;
+            let can_format_ctas = create_table.query.is_some()
+                && create_table.columns.is_empty()
+                && create_table.constraints.is_empty()
+                && create_table.like.is_none()
+                && create_table.clone.is_none()
+                && create_table.version.is_none()
+                && matches!(create_table.table_options, CreateTableOptions::None)
+                && create_table.file_format.is_none()
+                && create_table.location.is_none()
+                && create_table.comment.is_none()
+                && create_table.on_commit.is_none()
+                && create_table.on_cluster.is_none()
+                && create_table.primary_key.is_none()
+                && create_table.clustered_by.is_none()
+                && create_table.inherits.is_none()
+                && create_table.partition_of.is_none()
+                && create_table.for_values.is_none()
+                && matches!(create_table.hive_distribution, HiveDistributionStyle::NONE)
+                && create_table
+                    .hive_formats
+                    .as_ref()
+                    .is_none_or(hive_format_is_empty)
+                && !create_table.without_rowid
+                && !create_table.copy_grants
+                && !create_table.strict
+                && !create_table.dynamic
+                && !create_table.transient
+                && !create_table.volatile
+                && !create_table.iceberg
+                && create_table.enable_schema_evolution.is_none()
+                && create_table.change_tracking.is_none()
+                && create_table.data_retention_time_in_days.is_none()
+                && create_table.max_data_extension_time_in_days.is_none()
+                && create_table.default_ddl_collation.is_none()
+                && create_table.with_aggregation_policy.is_none()
+                && create_table.with_row_access_policy.is_none()
+                && create_table.with_tags.is_none()
+                && create_table.external_volume.is_none()
+                && create_table.base_location.is_none()
+                && create_table.catalog.is_none()
+                && create_table.catalog_sync.is_none()
+                && create_table.storage_serialization_policy.is_none()
+                && create_table.target_lag.is_none()
+                && create_table.warehouse.is_none()
+                && create_table.refresh_mode.is_none()
+                && create_table.initialize.is_none()
+                && !create_table.require_user;
 
             if simple_layout {
                 Ok(format_create_table(
-                    name,
-                    columns,
-                    constraints,
+                    &create_table.name,
+                    &create_table.columns,
+                    &create_table.constraints,
                     TableFormatOptions {
-                        if_not_exists: *if_not_exists,
-                        or_replace: *or_replace,
-                        temporary: *temporary,
-                        external: *external,
-                        global: *global,
+                        if_not_exists: create_table.if_not_exists,
+                        or_replace: create_table.or_replace,
+                        temporary: create_table.temporary,
+                        external: create_table.external,
+                        global: create_table.global,
                     },
                     cfg,
                 ))
             } else if can_format_ctas {
                 format_create_table_with_query(
-                    name,
-                    query.as_ref().unwrap(),
+                    &create_table.name,
+                    create_table
+                        .query
+                        .as_ref()
+                        .expect("query exists for ctas")
+                        .as_ref(),
                     TableFormatOptions {
-                        if_not_exists: *if_not_exists,
-                        or_replace: *or_replace,
-                        temporary: *temporary,
-                        external: *external,
-                        global: *global,
+                        if_not_exists: create_table.if_not_exists,
+                        or_replace: create_table.or_replace,
+                        temporary: create_table.temporary,
+                        external: create_table.external,
+                        global: create_table.global,
                     },
                     cfg,
                     alias_tracker,
                     CreateTableLayout {
-                        order_by: order_by.as_ref(),
-                        partition_by: partition_by.as_deref(),
-                        cluster_by: cluster_by.as_ref(),
+                        order_by: create_table.order_by.as_ref(),
+                        partition_by: create_table.partition_by.as_deref(),
+                        cluster_by: create_table.cluster_by.as_ref(),
                     },
                 )
             } else {
                 Ok(Doc::Text(stringify_with_alias_styles(stmt, alias_tracker)))
             }
         }
-        Statement::CreateView {
-            name,
-            columns,
-            query,
-            or_replace,
-            materialized,
-            options,
-            cluster_by,
-            with_no_schema_binding,
-            if_not_exists,
-            temporary,
-            ..
-        } => {
-            let simple_layout = matches!(options, CreateTableOptions::None)
-                && cluster_by.is_empty()
-                && !*with_no_schema_binding;
+        Statement::CreateView(create_view) => {
+            let simple_layout = matches!(create_view.options, CreateTableOptions::None)
+                && create_view.cluster_by.is_empty()
+                && !create_view.with_no_schema_binding
+                && !create_view.or_alter
+                && !create_view.secure
+                && create_view.comment.is_none()
+                && create_view.to.is_none()
+                && create_view.params.is_none();
 
             if simple_layout {
                 format_create_view(
-                    name,
-                    columns,
-                    query,
+                    &create_view.name,
+                    &create_view.columns,
+                    create_view.query.as_ref(),
                     CreateViewOptions {
-                        or_replace: *or_replace,
-                        materialized: *materialized,
-                        if_not_exists: *if_not_exists,
-                        temporary: *temporary,
+                        or_replace: create_view.or_replace,
+                        materialized: create_view.materialized,
+                        if_not_exists: create_view.if_not_exists,
+                        temporary: create_view.temporary,
                     },
                     cfg,
                     alias_tracker,
@@ -316,9 +339,9 @@ fn format_create_table(
 }
 
 struct CreateTableLayout<'a> {
-    order_by: Option<&'a Vec<Ident>>,
+    order_by: Option<&'a OneOrManyWithParens<Expr>>,
     partition_by: Option<&'a Expr>,
-    cluster_by: Option<&'a Vec<Ident>>,
+    cluster_by: Option<&'a WrappedCollection<Vec<Expr>>>,
 }
 
 fn format_create_table_with_query(
@@ -350,11 +373,20 @@ fn format_create_table_with_query(
     }
 
     if let Some(items) = layout.cluster_by {
-        if !items.is_empty() {
-            let exprs = items.iter().map(|e| e.to_string()).collect();
-            parts.push(Doc::Line);
-            parts.push(format_parenthesized_clause("CLUSTER BY", exprs, cfg, false));
-            has_pre_as_clause = true;
+        match items {
+            WrappedCollection::Parentheses(exprs) if !exprs.is_empty() => {
+                let exprs = exprs.iter().map(|e| e.to_string()).collect();
+                parts.push(Doc::Line);
+                parts.push(format_parenthesized_clause("CLUSTER BY", exprs, cfg, false));
+                has_pre_as_clause = true;
+            }
+            WrappedCollection::NoWrapping(exprs) if !exprs.is_empty() => {
+                let exprs = exprs.iter().map(|e| e.to_string()).collect();
+                parts.push(Doc::Line);
+                parts.push(format_comma_clause("CLUSTER BY", exprs, cfg));
+                has_pre_as_clause = true;
+            }
+            _ => {}
         }
     }
 
@@ -393,7 +425,7 @@ fn should_prefer_multiline_ctas(query: &Query) -> bool {
             select.projection.len() > 1
                 || select.selection.is_some()
                 || select.from.iter().any(|rel| !rel.joins.is_empty())
-                || !matches!(&select.group_by, GroupByExpr::Expressions(exprs) if exprs.is_empty())
+                || !matches!(&select.group_by, GroupByExpr::Expressions(exprs, _) if exprs.is_empty())
                 || select.having.is_some()
         }
         _ => true,
@@ -432,7 +464,7 @@ fn format_insert(
         head.push(keyword_doc(cfg, "INTO"));
     }
     head.push(Doc::Space);
-    head.push(Doc::Text(insert.table_name.to_string()));
+    head.push(Doc::Text(insert.table.to_string()));
 
     if let Some(alias) = &insert.table_alias {
         head.push(Doc::Space);
@@ -582,7 +614,7 @@ fn format_function_call(
     let over = func.over.take();
 
     if func.name.0.len() == 1 {
-        if let Some(ident) = func.name.0.first_mut() {
+        if let Some(ObjectNamePart::Identifier(ident)) = func.name.0.first_mut() {
             if ident.quote_style.is_none() && is_builtin_function_name(&ident.value) {
                 ident.value = apply_keyword_case(&ident.value, cfg);
             }
@@ -778,8 +810,8 @@ fn format_window_frame_bound(
     }
 }
 
-fn format_value_literal(value: &Value, cfg: &FormatterConfig) -> Doc {
-    match value {
+fn format_value_literal(value: &ValueWithSpan, cfg: &FormatterConfig) -> Doc {
+    match &value.value {
         Value::Boolean(flag) => {
             let text = if *flag { "TRUE" } else { "FALSE" };
             Doc::Text(apply_keyword_case(text, cfg))
@@ -801,21 +833,31 @@ fn data_type_has_custom(data_type: &DataType) -> bool {
         DataType::Custom(_, _) => true,
         DataType::Array(elem) => match elem {
             ArrayElemTypeDef::None => false,
+            ArrayElemTypeDef::Parenthesis(inner) => data_type_has_custom(inner),
             ArrayElemTypeDef::SquareBracket(inner, _) | ArrayElemTypeDef::AngleBracket(inner) => {
                 data_type_has_custom(inner)
             }
         },
-        DataType::Struct(fields) => fields
+        DataType::Struct(fields, _) => fields
             .iter()
             .any(|field| data_type_has_custom(&field.field_type)),
         _ => false,
     }
 }
 
-fn format_typed_string(data_type: &DataType, value: &str, cfg: &FormatterConfig) -> Doc {
-    let type_text = format_data_type(data_type, cfg);
-    let escaped = value.replace('\'', "''");
-    Doc::Text(format!("{type_text} '{escaped}'"))
+fn format_typed_string(typed: &TypedString, cfg: &FormatterConfig) -> Doc {
+    if typed.uses_odbc_syntax {
+        return Doc::Text(typed.to_string());
+    }
+
+    let type_text = format_data_type(&typed.data_type, cfg);
+    match &typed.value.value {
+        Value::SingleQuotedString(value) => {
+            let escaped = value.replace('\'', "''");
+            Doc::Text(format!("{type_text} '{escaped}'"))
+        }
+        _ => Doc::Text(format!("{type_text} {}", typed.value)),
+    }
 }
 
 fn format_cast_expr(
@@ -1138,11 +1180,13 @@ fn strip_relation_aliases_in_statement(
 ) {
     match stmt {
         Statement::Query(query) => strip_relation_aliases_in_query(text, query, alias_tracker),
-        Statement::CreateTable { query: Some(q), .. } => {
-            strip_relation_aliases_in_query(text, q, alias_tracker)
+        Statement::CreateTable(create_table) => {
+            if let Some(q) = &create_table.query {
+                strip_relation_aliases_in_query(text, q, alias_tracker);
+            }
         }
-        Statement::CreateView { query, .. } => {
-            strip_relation_aliases_in_query(text, query, alias_tracker)
+        Statement::CreateView(create_view) => {
+            strip_relation_aliases_in_query(text, create_view.query.as_ref(), alias_tracker)
         }
         Statement::Insert(insert) => {
             if let Some(query) = &insert.source {
@@ -1200,6 +1244,7 @@ fn strip_relation_aliases_in_table_factor(
         | TableFactor::Function { alias, .. }
         | TableFactor::TableFunction { alias, .. }
         | TableFactor::JsonTable { alias, .. }
+        | TableFactor::OpenJsonTable { alias, .. }
         | TableFactor::UNNEST { alias, .. } => {
             if let Some(alias) = alias {
                 remove_alias_keyword(text, alias_tracker, alias.to_string());
@@ -1218,6 +1263,11 @@ fn strip_relation_aliases_in_table_factor(
         | TableFactor::Unpivot { table, alias, .. }
         | TableFactor::MatchRecognize { table, alias, .. } => {
             strip_relation_aliases_in_table_factor(text, table, alias_tracker);
+            if let Some(alias) = alias {
+                remove_alias_keyword(text, alias_tracker, alias.to_string());
+            }
+        }
+        TableFactor::XmlTable { alias, .. } | TableFactor::SemanticView { alias, .. } => {
             if let Some(alias) = alias {
                 remove_alias_keyword(text, alias_tracker, alias.to_string());
             }
@@ -1298,9 +1348,22 @@ fn dialect_for_kind(kind: &DialectKind) -> Box<dyn Dialect> {
 mod tests {
     use super::*;
     use crate::config::{DialectKind, KeywordCase, SelectListStyle};
+    use std::fs;
+    use std::path::{Path, PathBuf};
 
     fn format_str(sql: &str, cfg: &FormatterConfig) -> String {
         format_sql(sql, cfg).expect("format")
+    }
+
+    fn reference_command_fixture_paths() -> Vec<PathBuf> {
+        let base = Path::new("fixtures/dremio/reference-commands");
+        let mut files = fs::read_dir(base)
+            .expect("read fixtures/dremio/reference-commands")
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("sql"))
+            .collect::<Vec<_>>();
+        files.sort();
+        files
     }
 
     #[test]
@@ -1480,7 +1543,7 @@ WHERE NOT EXISTS (
         let out = format_str(sql, &cfg);
         assert_eq!(
             out.trim(),
-            "CREATE TABLE demoCatalog.reporting.\"tables\".orders_partitioned AS\n(\n  SELECT\n    o.id AS order_id,\n    CURRENT_TIMESTAMP AS sync_time,\n    o.order_number AS order_number,\n    co.site_id AS site_id,\n    s.brand_id AS brand_id,\n    s.country_id AS site_country_id,\n    o.created_at AS created_at,\n    COALESCE(dist.revenue_share, 0) AS distribution_amount,\n    CASE WHEN o.change_time IS NULL THEN 0 ELSE 1 END AS is_changed,\n    CASE WHEN o.cancel_time IS NULL THEN 0 ELSE 1 END AS is_canceled\n  FROM demoCatalog.reporting.\"tables\".\"orders\" o\n  INNER JOIN demoCatalog.reporting.\"tables\".\"cart_orders\" co\n    ON co.order_id = o.id\n  INNER JOIN demoCatalog.reporting.\"tables\".\"order_revenues\" orev\n    ON orev.order_id = o.id\n  INNER JOIN demoCatalog.reporting.\"tables\".\"sites\" s\n    ON s.id = co.site_id\n  LEFT JOIN (\n    SELECT\n      i.order_id,\n      SUM(i.revenue) AS revenue_share\n    FROM demoCatalog.reporting.\"tables\".\"order_revenue_items\" i\n    INNER JOIN demoCatalog.reporting.\"tables\".\"product_types\" pt\n      ON i.product_type_id = pt.id\n    WHERE pt.revenue_group_id = 17\n    GROUP BY i.order_id\n  ) dist\n    ON dist.order_id = o.id\n  WHERE NOT EXISTS\n      (\n        SELECT\n          1\n        FROM demoCatalog.reporting.\"tables\".\"order_items\" AS oi\n        INNER JOIN demoCatalog.reporting.\"tables\".\"customer_items\" AS ci\n          ON ci.id = oi.customer_item_id\n        WHERE oi.order_id = o.id\n          AND ci.product_type_id = 620\n      )\n    AND (o.is_test_order = FALSE)\n);"
+            "CREATE TABLE demoCatalog.reporting.\"tables\".orders_partitioned AS\n(\n  SELECT\n    o.id AS order_id,\n    CURRENT_TIMESTAMP AS sync_time,\n    o.order_number AS order_number,\n    co.site_id AS site_id,\n    s.brand_id AS brand_id,\n    s.country_id AS site_country_id,\n    o.created_at AS created_at,\n    COALESCE(dist.revenue_share, 0) AS distribution_amount,\n    CASE WHEN o.change_time IS NULL THEN 0 ELSE 1 END AS is_changed,\n    CASE WHEN o.cancel_time IS NULL THEN 0 ELSE 1 END AS is_canceled\n  FROM demoCatalog.reporting.\"tables\".\"orders\" o\n  INNER JOIN demoCatalog.reporting.\"tables\".\"cart_orders\" co\n    ON co.order_id = o.id\n  INNER JOIN demoCatalog.reporting.\"tables\".\"order_revenues\" orev\n    ON orev.order_id = o.id\n  INNER JOIN demoCatalog.reporting.\"tables\".\"sites\" s\n    ON s.id = co.site_id\n  LEFT JOIN (\n    SELECT\n      i.order_id,\n      SUM(i.revenue) AS revenue_share\n    FROM demoCatalog.reporting.\"tables\".\"order_revenue_items\" i\n    INNER JOIN demoCatalog.reporting.\"tables\".\"product_types\" pt\n      ON i.product_type_id = pt.id\n    WHERE pt.revenue_group_id = 17\n    GROUP BY i.order_id\n  ) dist\n    ON dist.order_id = o.id\n  WHERE NOT EXISTS\n      (\n        SELECT\n          1\n        FROM demoCatalog.reporting.\"tables\".\"order_items\" oi\n        INNER JOIN demoCatalog.reporting.\"tables\".\"customer_items\" ci\n          ON ci.id = oi.customer_item_id\n        WHERE oi.order_id = o.id\n          AND ci.product_type_id = 620\n      )\n    AND (o.is_test_order = FALSE)\n);"
         );
     }
 
@@ -2205,5 +2268,48 @@ FROM external_cluster.app.raw_segments;
 ";
         let out = format_str(sql, &cfg);
         assert_eq!(out.trim(), sql.trim());
+    }
+
+    #[test]
+    fn formats_all_dremio_reference_command_fixtures_idempotently() {
+        let files = reference_command_fixture_paths();
+        assert_eq!(files.len(), 57, "expected 57 reference command fixtures");
+
+        let cfg = FormatterConfig {
+            dialect: DialectKind::Dremio,
+            ..Default::default()
+        };
+
+        for path in files {
+            let sql = fs::read_to_string(&path).expect("read fixture");
+            let once = format_sql(&sql, &cfg).unwrap_or_else(|err| {
+                panic!("format failed for {:?}: {err}", path);
+            });
+            let twice = format_sql(&once, &cfg).unwrap_or_else(|err| {
+                panic!("reformat failed for {:?}: {err}", path);
+            });
+            assert_eq!(once, twice, "format not idempotent for {:?}", path);
+        }
+    }
+
+    #[test]
+    fn formats_all_dremio_reference_command_fixtures_for_upper_and_lower_keyword_case() {
+        let files = reference_command_fixture_paths();
+        for keyword_case in [KeywordCase::Upper, KeywordCase::Lower] {
+            let cfg = FormatterConfig {
+                dialect: DialectKind::Dremio,
+                keyword_case,
+                ..Default::default()
+            };
+            for path in &files {
+                let sql = fs::read_to_string(path).expect("read fixture");
+                format_sql(&sql, &cfg).unwrap_or_else(|err| {
+                    panic!(
+                        "format failed for {:?} with keyword_case {:?}: {err}",
+                        path, keyword_case
+                    )
+                });
+            }
+        }
     }
 }
