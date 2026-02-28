@@ -12,6 +12,7 @@ This directory separates stable behavior from formatting heuristics and integrat
 
 - [`style-guide.md`](style-guide.md): current formatting heuristics and examples (non-contract)
 - [`dremio.md`](dremio.md): Dremio-specific supported syntax and formatting expectations
+- [`dremio-support-matrix.md`](dremio-support-matrix.md): command-by-command Dremio SQL reference coverage tracker
 
 ## Integrations and Development
 
