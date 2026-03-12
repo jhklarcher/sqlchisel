@@ -41,9 +41,9 @@ Reference export timestamp: 2026-02-28T14:20:54.462923+00:00
 | 12 | CREATE FOLDER | NATIVE | `fixtures/dremio/reference-commands/12_create_folder.sql` | `CreateFolder` command path |
 | 13 | CREATE PIPE Enterprise | NATIVE | `fixtures/dremio/reference-commands/13_create_pipe.sql` | `Pipe` command path |
 | 14 | CREATE TABLE | AST | `fixtures/dremio/reference-commands/14_create_table.sql` | SQL AST path |
-| 15 | CREATE TABLE AS | AST | `fixtures/dremio/reference-commands/15_create_table_as.sql` | SQL AST path |
+| 15 | CREATE TABLE AS | AST | `fixtures/dremio/reference-commands/15_create_table_as.sql` | SQL AST path + versioned source ref variant |
 | 16 | CREATE TAG | NATIVE | `fixtures/dremio/reference-commands/16_create_tag.sql` | `BranchTag` command path |
-| 17 | CREATE VIEW | AST | `fixtures/dremio/reference-commands/17_create_view.sql` | SQL AST path |
+| 17 | CREATE VIEW | AST | `fixtures/dremio/reference-commands/17_create_view.sql` | SQL AST path + versioned source ref variant |
 | 18 | DELETE | AST | `fixtures/dremio/reference-commands/18_delete.sql` | SQL AST path |
 | 19 | DESCRIBE PIPE Enterprise | NATIVE | `fixtures/dremio/reference-commands/19_describe_pipe.sql` | `Pipe` command path |
 | 20 | DROP | AST | `fixtures/dremio/reference-commands/20_drop.sql` | SQL AST path |
@@ -52,7 +52,7 @@ Reference export timestamp: 2026-02-28T14:20:54.462923+00:00
 | 23 | DROP TAG | NATIVE | `fixtures/dremio/reference-commands/23_drop_tag.sql` | `BranchTag` command path |
 | 24 | DROP VIEW | AST | `fixtures/dremio/reference-commands/24_drop_view.sql` | SQL AST path |
 | 25 | GRANT/REVOKE Enterprise | NATIVE | `fixtures/dremio/reference-commands/25_grant_revoke.sql` | Generic Dremio command path |
-| 26 | INSERT | AST | `fixtures/dremio/reference-commands/26_insert.sql` | SQL AST + insert formatting path |
+| 26 | INSERT | AST | `fixtures/dremio/reference-commands/26_insert.sql` | SQL AST + insert formatting path + versioned source ref variant |
 | 27 | MERGE | AST | `fixtures/dremio/reference-commands/27_merge.sql` | SQL AST path |
 | 28 | MERGE BRANCH | NATIVE | `fixtures/dremio/reference-commands/28_merge_branch.sql` | `BranchTag` command path |
 | 29 | OPTIMIZE TABLE | NATIVE | `fixtures/dremio/reference-commands/29_optimize_table.sql` | `TableMaintenance` command path |
@@ -96,8 +96,10 @@ Reference export timestamp: 2026-02-28T14:20:54.462923+00:00
 ## Evaluation Notes
 
 - Canonical command corpus: `fixtures/dremio/reference-commands/` with 57 fixture files.
+- Versioned source refs are covered in canonical `CREATE TABLE AS`, `CREATE VIEW`, and `INSERT` fixtures.
 - Parser guard: strict-mode test covers all 57 fixture files.
 - Formatter guard: idempotence + keyword-case matrix (upper/lower) covers all 57 fixture files.
+- Statement-level semantic-preservation tests assert version-clause retention for CTAS/CREATE VIEW/INSERT in parser + formatter paths.
 - `sqlparser` has been upgraded to `0.61.0` and all parser/formatter tests pass with the upgraded AST APIs.
 
 ## Backlog (Priority Order)
