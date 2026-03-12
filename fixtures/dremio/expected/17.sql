@@ -1,0 +1,19 @@
+CREATE TABLE a AS
+SELECT *
+FROM s.t
+AT TAG v1;
+
+CREATE VIEW v AS
+SELECT *
+FROM s.t
+AT BRANCH release
+AS OF TIMESTAMP '2025-01-01 00:00:00';
+
+INSERT INTO a
+SELECT *
+FROM s.t
+AT COMMIT 'a1b2c3d4';
+
+SELECT *
+FROM s.t
+AT REF "refs/heads/main";

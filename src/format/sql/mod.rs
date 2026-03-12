@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use regex::Regex;
 use sqlparser::ast::{
     ArrayElemTypeDef, CastFormat, CastKind, ColumnDef, CreateTableOptions, DataType, DateTimeField,
     Expr, Function, GroupByExpr, HiveDistributionStyle, HiveFormat, Insert, Interval, ObjectName,
@@ -257,6 +258,7 @@ fn format_statement(
                         .as_ref()
                         .expect("query exists for ctas")
                         .as_ref(),
+                    version.clone(),
                     TableFormatOptions {
                         if_not_exists: create_table.if_not_exists,
                         or_replace: create_table.or_replace,
@@ -273,7 +275,12 @@ fn format_statement(
                     },
                 )
             } else {
-                Ok(Doc::Text(stringify_with_alias_styles(stmt, alias_tracker)))
+                Ok(Doc::Text(stringify_with_alias_styles(
+                    stmt,
+                    alias_tracker,
+                    version.as_ref(),
+                    cfg,
+                )))
             }
         }
         Statement::CreateView(create_view) => {
@@ -297,15 +304,26 @@ fn format_statement(
                         if_not_exists: create_view.if_not_exists,
                         temporary: create_view.temporary,
                     },
+                    version.clone(),
                     cfg,
                     alias_tracker,
                 )
             } else {
-                Ok(Doc::Text(stringify_with_alias_styles(stmt, alias_tracker)))
+                Ok(Doc::Text(stringify_with_alias_styles(
+                    stmt,
+                    alias_tracker,
+                    version.as_ref(),
+                    cfg,
+                )))
             }
         }
-        Statement::Insert(insert) => format_insert(insert, cfg, alias_tracker),
-        other => Ok(Doc::Text(stringify_with_alias_styles(other, alias_tracker))),
+        Statement::Insert(insert) => format_insert(insert, cfg, version, alias_tracker),
+        other => Ok(Doc::Text(stringify_with_alias_styles(
+            other,
+            alias_tracker,
+            None,
+            cfg,
+        ))),
     }
 }
 
@@ -347,6 +365,7 @@ struct CreateTableLayout<'a> {
 fn format_create_table_with_query(
     name: &ObjectName,
     query: &Query,
+    version: Option<DremioVersionClause>,
     opts: TableFormatOptions,
     cfg: &FormatterConfig,
     alias_tracker: &mut RelationAliasTracker,
@@ -409,9 +428,14 @@ fn format_create_table_with_query(
 
     let prefer_multiline = has_pre_as_clause
         || (cfg.dialect == DialectKind::Dremio && should_prefer_multiline_ctas(query));
-    let body =
-        format_query_with_layout_preference(query, cfg, None, alias_tracker, prefer_multiline)
-            .unwrap_or_else(|_| Doc::Text(query.to_string()));
+    let body = format_query_with_layout_preference(
+        query,
+        cfg,
+        version.clone(),
+        alias_tracker,
+        prefer_multiline,
+    )
+    .unwrap_or_else(|_| Doc::Text(stringify_query_with_version(query, version.as_ref(), cfg)));
 
     parts.push(Doc::Line);
     parts.push(body);
@@ -435,11 +459,18 @@ fn should_prefer_multiline_ctas(query: &Query) -> bool {
 fn format_insert(
     insert: &Insert,
     cfg: &FormatterConfig,
+    version: Option<DremioVersionClause>,
     alias_tracker: &mut RelationAliasTracker,
 ) -> Result<Doc> {
     let source = match &insert.source {
         Some(query) => query,
-        None => return Ok(Doc::Text(Statement::Insert(insert.clone()).to_string())),
+        None => {
+            return Ok(Doc::Text(reattach_dremio_version_clause(
+                &Statement::Insert(insert.clone()).to_string(),
+                version.as_ref(),
+                cfg,
+            )));
+        }
     };
 
     let complex = insert.overwrite
@@ -454,7 +485,11 @@ fn format_insert(
         || insert.or.is_some();
 
     if complex {
-        return Ok(Doc::Text(Statement::Insert(insert.clone()).to_string()));
+        return Ok(Doc::Text(reattach_dremio_version_clause(
+            &Statement::Insert(insert.clone()).to_string(),
+            version.as_ref(),
+            cfg,
+        )));
     }
 
     let mut head = Vec::new();
@@ -477,8 +512,8 @@ fn format_insert(
         head.push(format_parenthesized_inline(cols));
     }
 
-    let body = format_query(source, cfg, None, alias_tracker)
-        .unwrap_or_else(|_| Doc::Text(source.to_string()));
+    let body = format_query(source, cfg, version.clone(), alias_tracker)
+        .unwrap_or_else(|_| Doc::Text(stringify_query_with_version(source, version.as_ref(), cfg)));
 
     Ok(Doc::Group(vec![Doc::Group(head), Doc::Line, body]))
 }
@@ -520,6 +555,7 @@ fn format_create_view(
     columns: &[ViewColumnDef],
     query: &Query,
     opts: CreateViewOptions,
+    version: Option<DremioVersionClause>,
     cfg: &FormatterConfig,
     alias_tracker: &mut RelationAliasTracker,
 ) -> Result<Doc> {
@@ -547,8 +583,8 @@ fn format_create_view(
         parts.push(format_parenthesized_inline(cols));
     }
 
-    let body = format_query(query, cfg, None, alias_tracker)
-        .unwrap_or_else(|_| Doc::Text(query.to_string()));
+    let body = format_query(query, cfg, version.clone(), alias_tracker)
+        .unwrap_or_else(|_| Doc::Text(stringify_query_with_version(query, version.as_ref(), cfg)));
 
     parts.push(Doc::Space);
     parts.push(keyword_doc(cfg, "AS"));
@@ -1167,10 +1203,63 @@ fn render_option_content(rest: &str, cfg: &FormatterConfig) -> Doc {
 fn stringify_with_alias_styles(
     stmt: &Statement,
     alias_tracker: &mut RelationAliasTracker,
+    version: Option<&DremioVersionClause>,
+    cfg: &FormatterConfig,
 ) -> String {
     let mut text = stmt.to_string();
     strip_relation_aliases_in_statement(&mut text, stmt, alias_tracker);
-    text
+    reattach_dremio_version_clause(&text, version, cfg)
+}
+
+fn stringify_query_with_version(
+    query: &Query,
+    version: Option<&DremioVersionClause>,
+    cfg: &FormatterConfig,
+) -> String {
+    let text = query.to_string();
+    reattach_dremio_version_clause(&text, version, cfg)
+}
+
+fn reattach_dremio_version_clause(
+    sql: &str,
+    version: Option<&DremioVersionClause>,
+    cfg: &FormatterConfig,
+) -> String {
+    let Some(version) = version else {
+        return sql.to_string();
+    };
+
+    let from_re = Regex::new(r"(?is)\bFROM\b\s+").expect("from regex");
+    let Some(from_match) = from_re.find(sql) else {
+        return sql.to_string();
+    };
+
+    let boundary_re = Regex::new(
+        r"(?is)\b(WHERE|GROUP\s+BY|HAVING|QUALIFY|WINDOW|ORDER\s+BY|LIMIT|OFFSET|JOIN|INNER|LEFT|RIGHT|FULL|CROSS|UNION|EXCEPT|INTERSECT)\b",
+    )
+    .expect("boundary regex");
+
+    let after_from = &sql[from_match.end()..];
+    let boundary_pos = boundary_re
+        .find(after_from)
+        .map(|m| from_match.end() + m.start())
+        .unwrap_or(sql.len());
+
+    let head = sql[..boundary_pos].trim_end();
+    let tail = sql[boundary_pos..].trim_start();
+    let version_text = format_doc(
+        &format_dremio_version_clause(version, cfg),
+        &PrintConfig {
+            line_length: cfg.line_length,
+            indent_width: cfg.indent_width,
+        },
+    );
+
+    if tail.is_empty() {
+        format!("{head}\n{version_text}")
+    } else {
+        format!("{head}\n{version_text}\n{tail}")
+    }
 }
 
 fn strip_relation_aliases_in_statement(
@@ -1558,6 +1647,41 @@ WHERE NOT EXISTS (
         assert_eq!(
             out.trim(),
             "SELECT *\nFROM my_source.my_space.my_table\nAT BRANCH my_branch\nAS OF TIMESTAMP '2025-01-01 00:00:00'"
+        );
+    }
+
+    #[test]
+    fn preserves_dremio_version_clause_in_ctas_view_insert_and_select() {
+        let cfg = FormatterConfig {
+            dialect: DialectKind::Dremio,
+            ..Default::default()
+        };
+        let sql = "\
+CREATE TABLE a AS SELECT * FROM s.t AT TAG v1;
+CREATE VIEW v AS SELECT * FROM s.t AT TAG v1;
+INSERT INTO a SELECT * FROM s.t AT TAG v1;
+SELECT * FROM s.t AT TAG v1;";
+        let out = format_str(sql, &cfg);
+        assert_eq!(
+            out.trim(),
+            "CREATE TABLE a AS\nSELECT *\nFROM s.t\nAT TAG v1;\n\nCREATE VIEW v AS\nSELECT *\nFROM s.t\nAT TAG v1;\n\nINSERT INTO a\nSELECT *\nFROM s.t\nAT TAG v1;\n\nSELECT *\nFROM s.t\nAT TAG v1;"
+        );
+    }
+
+    #[test]
+    fn preserves_dremio_as_of_timestamp_in_non_top_level_statements() {
+        let cfg = FormatterConfig {
+            dialect: DialectKind::Dremio,
+            ..Default::default()
+        };
+        let sql = "\
+CREATE TABLE a AS SELECT * FROM s.t AT BRANCH release AS OF TIMESTAMP '2025-01-01 00:00:00';
+CREATE VIEW v AS SELECT * FROM s.t AT BRANCH release AS OF TIMESTAMP '2025-01-01 00:00:00';
+INSERT INTO a SELECT * FROM s.t AT BRANCH release AS OF TIMESTAMP '2025-01-01 00:00:00';";
+        let out = format_str(sql, &cfg);
+        assert_eq!(
+            out.trim(),
+            "CREATE TABLE a AS\nSELECT *\nFROM s.t\nAT BRANCH release\nAS OF TIMESTAMP '2025-01-01 00:00:00';\n\nCREATE VIEW v AS\nSELECT *\nFROM s.t\nAT BRANCH release\nAS OF TIMESTAMP '2025-01-01 00:00:00';\n\nINSERT INTO a\nSELECT *\nFROM s.t\nAT BRANCH release\nAS OF TIMESTAMP '2025-01-01 00:00:00';"
         );
     }
 

@@ -1013,6 +1013,55 @@ mod tests {
     }
 
     #[test]
+    fn captures_dremio_version_clause_for_ctas_view_and_insert() {
+        let sql = "\
+CREATE TABLE a AS SELECT * FROM s.t AT TAG v1;
+CREATE VIEW v AS SELECT * FROM s.t AT BRANCH dev AS OF TIMESTAMP '2025-01-01 00:00:00';
+INSERT INTO a SELECT * FROM s.t AT COMMIT 'a1b2c3d4';";
+        let stmts = parse_sql(sql, DialectKind::Dremio).expect("parse dremio versioned statements");
+        assert_eq!(stmts.len(), 3);
+
+        match &stmts[0] {
+            ParsedStatement::Sql { version, .. } => {
+                assert!(matches!(
+                    version,
+                    Some(DremioVersionClause {
+                        at: Some(VersionSelector::Tag(tag)),
+                        as_of_timestamp: None
+                    }) if tag == "v1"
+                ));
+            }
+            other => panic!("expected SQL statement, got {other:?}"),
+        }
+
+        match &stmts[1] {
+            ParsedStatement::Sql { version, .. } => {
+                assert!(matches!(
+                    version,
+                    Some(DremioVersionClause {
+                        at: Some(VersionSelector::Branch(branch)),
+                        as_of_timestamp: Some(ts)
+                    }) if branch == "dev" && ts == "'2025-01-01 00:00:00'"
+                ));
+            }
+            other => panic!("expected SQL statement, got {other:?}"),
+        }
+
+        match &stmts[2] {
+            ParsedStatement::Sql { version, .. } => {
+                assert!(matches!(
+                    version,
+                    Some(DremioVersionClause {
+                        at: Some(VersionSelector::Commit(commit)),
+                        as_of_timestamp: None
+                    }) if commit == "'a1b2c3d4'"
+                ));
+            }
+            other => panic!("expected SQL statement, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_dremio_show_reflections() {
         let sql = "show reflections in my_space";
         let stmts = parse_sql(sql, DialectKind::Dremio).expect("parse show reflections");
