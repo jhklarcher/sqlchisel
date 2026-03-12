@@ -7,5 +7,5 @@ SELECT
   o.created_at AS order_created_at,
   coalesce(md5(c.email), '') AS email_hash
 FROM demoCatalog.sales.staging.analytics.orders o
-INNER JOIN demoCatalog.sales.staging.crm.customers c
+JOIN demoCatalog.sales.staging.crm.customers c
   ON c.order_id = o.id;

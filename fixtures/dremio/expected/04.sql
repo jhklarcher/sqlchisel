@@ -13,7 +13,7 @@ SELECT
 FROM arctic_catalog.analytics_space.orders_history o
 AT BRANCH feature_campaign_x
 AS OF TIMESTAMP '2024-10-01 12:00:00'
-INNER JOIN arctic_catalog.analytics_space.order_items_history i
+JOIN arctic_catalog.analytics_space.order_items_history i
   ON i.order_id = o.order_id
   AND i.valid_from <= o.order_ts
   AND (

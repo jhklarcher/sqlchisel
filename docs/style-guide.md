@@ -52,6 +52,7 @@ FROM t;
 - Clause order: `SELECT`, `FROM`, `WHERE`, `GROUP BY`, `HAVING`, `WINDOW` (if any), `QUALIFY` (if supported), `ORDER BY`, `LIMIT`/`FETCH`, `OFFSET`
 - Each clause starts on its own line (except small inline `SELECT`)
 - `FROM` base relation on its own line; each `JOIN` on a new line aligned with `FROM`
+- Join token style is preserved (`JOIN` remains `JOIN`; `INNER JOIN` remains `INNER JOIN`)
 - `ON` is indented one level under its join
 - `WHERE` / `HAVING` / `QUALIFY` break logical conditions across lines
 - `GROUP BY` renders one item per line when more than one expression is present

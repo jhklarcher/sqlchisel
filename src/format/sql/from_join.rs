@@ -242,7 +242,7 @@ fn format_join(
     alias_tracker: &mut super::RelationAliasTracker,
 ) -> Doc {
     let (prefix, constraint, asof_match) = match &join.join_operator {
-        JoinOperator::Join(constraint) => ("INNER JOIN", Some(constraint), None),
+        JoinOperator::Join(constraint) => ("JOIN", Some(constraint), None),
         JoinOperator::Inner(constraint) => ("INNER JOIN", Some(constraint), None),
         JoinOperator::Left(constraint) => ("LEFT JOIN", Some(constraint), None),
         JoinOperator::LeftOuter(constraint) => ("LEFT JOIN", Some(constraint), None),
