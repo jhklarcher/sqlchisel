@@ -1,27 +1,25 @@
-use sqlparser::ast::Expr;
+use sqlparser::ast::{CaseWhen, Expr};
 
 use crate::config::FormatterConfig;
 use crate::format::doc::Doc;
 
 pub(super) fn format_case(
     operand: Option<&Expr>,
-    conditions: &[Expr],
-    results: &[Expr],
+    branches: &[CaseWhen],
     else_result: &Option<Box<Expr>>,
     inline_limit: usize,
     cfg: &FormatterConfig,
     alias_tracker: &mut super::RelationAliasTracker,
 ) -> Doc {
-    let branch_count = conditions.len();
-    let inline_len = estimate_case_inline_length(operand, conditions, results, else_result)
-        .unwrap_or(usize::MAX);
+    let branch_count = branches.len();
+    let inline_len =
+        estimate_case_inline_length(operand, branches, else_result).unwrap_or(usize::MAX);
     let force_multiline = branch_count > 1 || inline_len > inline_limit;
 
     if force_multiline {
         format_case_multiline(
             operand,
-            conditions,
-            results,
+            branches,
             else_result,
             inline_limit,
             cfg,
@@ -30,8 +28,7 @@ pub(super) fn format_case(
     } else {
         format_case_inline(
             operand,
-            conditions,
-            results,
+            branches,
             else_result,
             inline_limit,
             cfg,
@@ -42,8 +39,7 @@ pub(super) fn format_case(
 
 fn format_case_inline(
     operand: Option<&Expr>,
-    conditions: &[Expr],
-    results: &[Expr],
+    branches: &[CaseWhen],
     else_result: &Option<Box<Expr>>,
     inline_limit: usize,
     cfg: &FormatterConfig,
@@ -56,15 +52,25 @@ fn format_case_inline(
         parts.push(super::format_expr(op, inline_limit, cfg, alias_tracker));
     }
 
-    for (cond, res) in conditions.iter().zip(results.iter()) {
+    for branch in branches {
         parts.push(Doc::Space);
         parts.push(super::keyword_doc(cfg, "WHEN"));
         parts.push(Doc::Space);
-        parts.push(super::format_expr(cond, inline_limit, cfg, alias_tracker));
+        parts.push(super::format_expr(
+            &branch.condition,
+            inline_limit,
+            cfg,
+            alias_tracker,
+        ));
         parts.push(Doc::Space);
         parts.push(super::keyword_doc(cfg, "THEN"));
         parts.push(Doc::Space);
-        parts.push(super::format_expr(res, inline_limit, cfg, alias_tracker));
+        parts.push(super::format_expr(
+            &branch.result,
+            inline_limit,
+            cfg,
+            alias_tracker,
+        ));
     }
 
     if let Some(res) = else_result {
@@ -82,8 +88,7 @@ fn format_case_inline(
 
 fn format_case_multiline(
     operand: Option<&Expr>,
-    conditions: &[Expr],
-    results: &[Expr],
+    branches: &[CaseWhen],
     else_result: &Option<Box<Expr>>,
     inline_limit: usize,
     cfg: &FormatterConfig,
@@ -96,18 +101,18 @@ fn format_case_multiline(
     }
 
     let mut lines = Vec::new();
-    for (idx, (cond, res)) in conditions.iter().zip(results.iter()).enumerate() {
+    for (idx, branch) in branches.iter().enumerate() {
         if idx > 0 {
             lines.push(Doc::Line);
         }
         lines.push(Doc::Group(vec![
             super::keyword_doc(cfg, "WHEN"),
             Doc::Space,
-            super::format_expr(cond, inline_limit, cfg, alias_tracker),
+            super::format_expr(&branch.condition, inline_limit, cfg, alias_tracker),
             Doc::Space,
             super::keyword_doc(cfg, "THEN"),
             Doc::Space,
-            super::format_expr(res, inline_limit, cfg, alias_tracker),
+            super::format_expr(&branch.result, inline_limit, cfg, alias_tracker),
         ]));
     }
 
@@ -138,8 +143,7 @@ fn format_case_multiline(
 
 fn estimate_case_inline_length(
     operand: Option<&Expr>,
-    conditions: &[Expr],
-    results: &[Expr],
+    branches: &[CaseWhen],
     else_result: &Option<Box<Expr>>,
 ) -> Option<usize> {
     let mut len = "CASE".len();
@@ -148,10 +152,10 @@ fn estimate_case_inline_length(
         len = len.checked_add(1 + op.to_string().len())?;
     }
 
-    for (cond, res) in conditions.iter().zip(results.iter()) {
+    for branch in branches {
         len = len
-            .checked_add(1 + "WHEN".len() + 1 + cond.to_string().len())?
-            .checked_add(1 + "THEN".len() + 1 + res.to_string().len())?;
+            .checked_add(1 + "WHEN".len() + 1 + branch.condition.to_string().len())?
+            .checked_add(1 + "THEN".len() + 1 + branch.result.to_string().len())?;
     }
 
     if let Some(res) = else_result {

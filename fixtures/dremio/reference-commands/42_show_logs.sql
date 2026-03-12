@@ -1,0 +1,2 @@
+SHOW LOGS;
+SHOW LOGS AT BRANCH main IN my_source;

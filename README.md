@@ -41,6 +41,7 @@ cat query.sql | sqlchisel --stdin --format
 - Stable formatter behavior: [`docs/format-contract.md`](docs/format-contract.md)
 - Formatting heuristics (non-contract): [`docs/style-guide.md`](docs/style-guide.md)
 - Dremio support notes: [`docs/dremio.md`](docs/dremio.md)
+- Dremio reference coverage tracker: [`docs/dremio-support-matrix.md`](docs/dremio-support-matrix.md)
 - Editor integrations: [`docs/editor-integrations.md`](docs/editor-integrations.md)
 
 ## Contributing

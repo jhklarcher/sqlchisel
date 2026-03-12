@@ -41,3 +41,8 @@ When Dremio formatting behavior changes:
 - update `fixtures/dremio/in/` inputs as needed
 - regenerate `fixtures/dremio/out/` using `--dialect dremio`
 - keep `fixtures/dremio/expected/` in sync
+
+## Coverage Tracking
+
+For command-level support status against the exported Dremio SQL reference, see
+[`dremio-support-matrix.md`](dremio-support-matrix.md).

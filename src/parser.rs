@@ -3,7 +3,6 @@ use regex::Regex;
 use sqlparser::ast::{Query, SetExpr, Statement, TableFactor, TableWithJoins, With};
 use sqlparser::dialect::{AnsiDialect, Dialect, GenericDialect};
 use sqlparser::parser::{Parser, ParserError};
-use sqlparser::tokenizer::{Token, Tokenizer};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VersionSelector {
@@ -80,6 +79,10 @@ pub enum DremioCommand {
     CreateFolder {
         if_not_exists: bool,
         path: String,
+    },
+    Generic {
+        head: Vec<String>,
+        rest: String,
     },
 }
 
@@ -283,8 +286,7 @@ fn parse_ansi(
             }
         };
         for stmt in stmts.drain(..) {
-            let relation_alias_has_as =
-                collect_relation_alias_flags(&stmt, normalized, dialect.as_ref());
+            let relation_alias_has_as = collect_relation_alias_flags(&stmt);
             out.push(ParsedStatement::Sql {
                 stmt: Box::new(stmt),
                 version: None,
@@ -334,8 +336,7 @@ fn parse_dremio(
             }
         };
         if let Some(stmt) = stmts.pop() {
-            let relation_alias_has_as =
-                collect_relation_alias_flags(&stmt, normalized, dialect.as_ref());
+            let relation_alias_has_as = collect_relation_alias_flags(&stmt);
             out.push(ParsedStatement::Sql {
                 stmt: Box::new(stmt),
                 version: parsed.version,
@@ -347,220 +348,112 @@ fn parse_dremio(
     Ok(out)
 }
 
-fn collect_relation_alias_flags(stmt: &Statement, sql: &str, dialect: &dyn Dialect) -> Vec<bool> {
-    let tokens = match Tokenizer::new(dialect, sql).tokenize() {
-        Ok(tokens) => tokens,
-        Err(_) => return Vec::new(),
-    }
-    .into_iter()
-    .filter(|t| !matches!(t, Token::Whitespace(_)))
-    .collect::<Vec<_>>();
-
+fn collect_relation_alias_flags(stmt: &Statement) -> Vec<bool> {
     let mut flags = Vec::new();
-    collect_aliases_from_statement(stmt, &tokens, &mut flags, dialect);
+    collect_aliases_from_statement(stmt, &mut flags);
     flags
 }
 
-fn collect_aliases_from_statement(
-    stmt: &Statement,
-    tokens: &[Token],
-    flags: &mut Vec<bool>,
-    dialect: &dyn Dialect,
-) {
+fn collect_aliases_from_statement(stmt: &Statement, flags: &mut Vec<bool>) {
     match stmt {
-        Statement::Query(query) => {
-            collect_aliases_from_query(query.as_ref(), tokens, flags, dialect)
+        Statement::Query(query) => collect_aliases_from_query(query.as_ref(), flags),
+        Statement::CreateTable(create_table) => {
+            if let Some(q) = &create_table.query {
+                collect_aliases_from_query(q, flags);
+            }
         }
-        Statement::CreateTable { query: Some(q), .. } => {
-            collect_aliases_from_query(q, tokens, flags, dialect);
-        }
-        Statement::CreateView { query, .. } => {
-            collect_aliases_from_query(query, tokens, flags, dialect);
+        Statement::CreateView(create_view) => {
+            collect_aliases_from_query(create_view.query.as_ref(), flags);
         }
         Statement::Insert(insert) => {
             if let Some(query) = &insert.source {
-                collect_aliases_from_query(query, tokens, flags, dialect);
+                collect_aliases_from_query(query, flags);
             }
         }
         _ => {}
     };
 }
 
-fn collect_aliases_from_query(
-    query: &Query,
-    tokens: &[Token],
-    flags: &mut Vec<bool>,
-    dialect: &dyn Dialect,
-) {
+fn collect_aliases_from_query(query: &Query, flags: &mut Vec<bool>) {
     if let Some(with) = &query.with {
-        collect_aliases_from_with(with, tokens, flags, dialect);
+        collect_aliases_from_with(with, flags);
     }
 
     match query.body.as_ref() {
-        SetExpr::Select(select) => collect_aliases_from_select(select, tokens, flags, dialect),
-        SetExpr::Query(inner) => collect_aliases_from_query(inner.as_ref(), tokens, flags, dialect),
+        SetExpr::Select(select) => collect_aliases_from_select(select, flags),
+        SetExpr::Query(inner) => collect_aliases_from_query(inner.as_ref(), flags),
         _ => {}
     }
 }
 
-fn collect_aliases_from_with(
-    with: &With,
-    tokens: &[Token],
-    flags: &mut Vec<bool>,
-    dialect: &dyn Dialect,
-) {
+fn collect_aliases_from_with(with: &With, flags: &mut Vec<bool>) {
     for cte in &with.cte_tables {
-        collect_aliases_from_query(cte.query.as_ref(), tokens, flags, dialect);
+        collect_aliases_from_query(cte.query.as_ref(), flags);
     }
 }
 
-fn collect_aliases_from_select(
-    select: &sqlparser::ast::Select,
-    tokens: &[Token],
-    flags: &mut Vec<bool>,
-    dialect: &dyn Dialect,
-) {
+fn collect_aliases_from_select(select: &sqlparser::ast::Select, flags: &mut Vec<bool>) {
     for rel in &select.from {
-        collect_aliases_from_table_factor(&rel.relation, tokens, flags, dialect);
+        collect_aliases_from_table_factor(&rel.relation, flags);
         for join in &rel.joins {
-            collect_aliases_from_table_factor(&join.relation, tokens, flags, dialect);
+            collect_aliases_from_table_factor(&join.relation, flags);
         }
     }
 }
 
-fn collect_aliases_from_table_with_joins(
-    rel: &TableWithJoins,
-    tokens: &[Token],
-    flags: &mut Vec<bool>,
-    dialect: &dyn Dialect,
-) {
-    collect_aliases_from_table_factor(&rel.relation, tokens, flags, dialect);
+fn collect_aliases_from_table_with_joins(rel: &TableWithJoins, flags: &mut Vec<bool>) {
+    collect_aliases_from_table_factor(&rel.relation, flags);
     for join in &rel.joins {
-        collect_aliases_from_table_factor(&join.relation, tokens, flags, dialect);
+        collect_aliases_from_table_factor(&join.relation, flags);
     }
 }
 
-fn collect_aliases_from_table_factor(
-    factor: &TableFactor,
-    tokens: &[Token],
-    flags: &mut Vec<bool>,
-    dialect: &dyn Dialect,
-) {
+fn collect_aliases_from_table_factor(factor: &TableFactor, flags: &mut Vec<bool>) {
     match factor {
         TableFactor::Derived {
             subquery, alias, ..
         } => {
-            collect_aliases_from_query(subquery, tokens, flags, dialect);
-            if alias.is_some() {
-                flags.push(relation_alias_has_as(factor, tokens, dialect));
+            collect_aliases_from_query(subquery, flags);
+            if let Some(alias) = alias {
+                flags.push(alias.explicit);
             }
         }
         TableFactor::Table { alias, .. }
         | TableFactor::Function { alias, .. }
         | TableFactor::TableFunction { alias, .. }
+        | TableFactor::OpenJsonTable { alias, .. }
         | TableFactor::JsonTable { alias, .. } => {
-            if alias.is_some() {
-                flags.push(relation_alias_has_as(factor, tokens, dialect));
+            if let Some(alias) = alias {
+                flags.push(alias.explicit);
             }
         }
         TableFactor::UNNEST { alias, .. } => {
-            if alias.is_some() {
-                flags.push(relation_alias_has_as(factor, tokens, dialect));
+            if let Some(alias) = alias {
+                flags.push(alias.explicit);
             }
         }
         TableFactor::NestedJoin {
             table_with_joins,
             alias,
         } => {
-            collect_aliases_from_table_with_joins(table_with_joins, tokens, flags, dialect);
-            if alias.is_some() {
-                flags.push(relation_alias_has_as(factor, tokens, dialect));
+            collect_aliases_from_table_with_joins(table_with_joins, flags);
+            if let Some(alias) = alias {
+                flags.push(alias.explicit);
             }
         }
         TableFactor::Pivot { table, alias, .. }
         | TableFactor::Unpivot { table, alias, .. }
         | TableFactor::MatchRecognize { table, alias, .. } => {
-            collect_aliases_from_table_factor(table, tokens, flags, dialect);
-            if alias.is_some() {
-                flags.push(relation_alias_has_as(factor, tokens, dialect));
+            collect_aliases_from_table_factor(table, flags);
+            if let Some(alias) = alias {
+                flags.push(alias.explicit);
             }
         }
-    }
-}
-
-fn relation_alias_has_as(factor: &TableFactor, tokens: &[Token], dialect: &dyn Dialect) -> bool {
-    let alias = match table_factor_alias_str(factor) {
-        Some(alias) => alias,
-        None => return true,
-    };
-
-    let with_as = factor.to_string();
-    let needle = format!(" AS {alias}");
-    let without_as = if let Some(pos) = with_as.find(&needle) {
-        let mut no_as = with_as.clone();
-        no_as.replace_range(pos..pos + needle.len(), &format!(" {alias}"));
-        no_as
-    } else {
-        with_as.clone()
-    };
-
-    let with_tokens = tokenize_fragment(&with_as, dialect);
-    let without_tokens = tokenize_fragment(&without_as, dialect);
-
-    let has_with = tokens_contain_pattern(tokens, &with_tokens);
-    let has_without = tokens_contain_pattern(tokens, &without_tokens);
-
-    match (has_with, has_without) {
-        (true, false) => true,
-        (false, true) => false,
-        (true, true) => true,
-        (false, false) => false,
-    }
-}
-
-fn table_factor_alias_str(factor: &TableFactor) -> Option<String> {
-    match factor {
-        TableFactor::Table { alias, .. }
-        | TableFactor::Derived { alias, .. }
-        | TableFactor::Function { alias, .. }
-        | TableFactor::TableFunction { alias, .. }
-        | TableFactor::UNNEST { alias, .. }
-        | TableFactor::JsonTable { alias, .. }
-        | TableFactor::NestedJoin { alias, .. }
-        | TableFactor::Pivot { alias, .. }
-        | TableFactor::Unpivot { alias, .. }
-        | TableFactor::MatchRecognize { alias, .. } => alias.as_ref().map(|a| a.to_string()),
-    }
-}
-
-fn tokenize_fragment(sql: &str, dialect: &dyn Dialect) -> Vec<Token> {
-    Tokenizer::new(dialect, sql)
-        .tokenize()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|t| !matches!(t, Token::Whitespace(_)))
-        .collect()
-}
-
-fn tokens_contain_pattern(haystack: &[Token], needle: &[Token]) -> bool {
-    if needle.is_empty() {
-        return false;
-    }
-
-    haystack.windows(needle.len()).any(|window| {
-        window
-            .iter()
-            .zip(needle.iter())
-            .all(|(a, b)| tokens_eq(a, b))
-    })
-}
-
-fn tokens_eq(a: &Token, b: &Token) -> bool {
-    match (a, b) {
-        (Token::Word(wa), Token::Word(wb)) => {
-            wa.quote_style == wb.quote_style && wa.value.eq_ignore_ascii_case(&wb.value)
+        TableFactor::XmlTable { alias, .. } | TableFactor::SemanticView { alias, .. } => {
+            if let Some(alias) = alias {
+                flags.push(alias.explicit);
+            }
         }
-        _ => a == b,
     }
 }
 
@@ -754,7 +647,7 @@ fn parse_dremio_command(raw: &str) -> Option<DremioCommand> {
         return Some(DremioCommand::AlterPds { rest });
     }
 
-    if lower.starts_with("copy into table") {
+    if starts_with_command_prefix(&lower, "copy into table") {
         let rest = normalized["copy into table".len()..].trim().to_string();
         return Some(DremioCommand::TableMaintenance {
             verb: "COPY INTO TABLE".to_string(),
@@ -762,9 +655,22 @@ fn parse_dremio_command(raw: &str) -> Option<DremioCommand> {
         });
     }
 
+    if starts_with_command_prefix(&lower, "copy into") {
+        let rest = normalized["copy into".len()..].trim().to_string();
+        return Some(DremioCommand::TableMaintenance {
+            verb: "COPY INTO".to_string(),
+            rest,
+        });
+    }
+
     if lower.starts_with("analyze table") {
         let rest = normalized["analyze table".len()..].trim().to_string();
         return Some(DremioCommand::AnalyzeTable { rest });
+    }
+
+    if starts_with_command_prefix(&lower, "show tblproperties") {
+        let rest = normalized["show tblproperties".len()..].trim().to_string();
+        return Some(DremioCommand::ShowTableProperties { rest });
     }
 
     if lower.starts_with("show table properties") {
@@ -814,7 +720,7 @@ fn parse_dremio_command(raw: &str) -> Option<DremioCommand> {
     }
 
     for kind in ["roles", "users"] {
-        if lower.starts_with(kind) {
+        if starts_with_command_prefix(&lower, kind) {
             let rest = trimmed[kind.len()..].trim().to_string();
             return Some(DremioCommand::RolesUsers {
                 kind: kind.to_string(),
@@ -823,13 +729,44 @@ fn parse_dremio_command(raw: &str) -> Option<DremioCommand> {
         }
     }
 
-    if lower.starts_with("row column policies") || lower.starts_with("row-column policies") {
-        let rest = trimmed
-            .trim_start_matches("row column policies")
-            .trim_start_matches("row-column policies")
-            .trim()
-            .to_string();
+    if starts_with_command_prefix(&lower, "row column policies") {
+        let rest = normalized["row column policies".len()..].trim().to_string();
         return Some(DremioCommand::RowColumnPolicies { rest });
+    }
+
+    if starts_with_command_prefix(&lower, "row-column policies") {
+        let rest = normalized["row-column policies".len()..].trim().to_string();
+        return Some(DremioCommand::RowColumnPolicies { rest });
+    }
+
+    for (head, prefix) in [
+        (&["ALTER", "FOLDER"][..], "alter folder"),
+        (&["ALTER", "SOURCE"][..], "alter source"),
+        (&["ALTER", "SPACE"][..], "alter space"),
+        (&["ALTER", "VIEW"][..], "alter view"),
+        (&["ALTER", "TABLE"][..], "alter table"),
+        (&["GRANT"][..], "grant"),
+        (&["REVOKE"][..], "revoke"),
+        (&["CREATE", "ROLE"][..], "create role"),
+        (&["DROP", "ROLE"][..], "drop role"),
+        (&["GRANT", "ROLE"][..], "grant role"),
+        (&["REVOKE", "ROLE"][..], "revoke role"),
+        (&["CREATE", "USER"][..], "create user"),
+        (&["ALTER", "USER"][..], "alter user"),
+        (&["DROP", "USER"][..], "drop user"),
+        (&["SHOW", "FUNCTIONS"][..], "show functions"),
+        (&["CREATE", "FUNCTION"][..], "create function"),
+        (&["DROP", "FUNCTION"][..], "drop function"),
+        (&["DESCRIBE", "FUNCTION"][..], "describe function"),
+        (&["ALTER", "ROLE"][..], "alter role"),
+    ] {
+        if starts_with_command_prefix(&lower, prefix) {
+            let rest = normalized[prefix.len()..].trim().to_string();
+            return Some(DremioCommand::Generic {
+                head: head.iter().map(|s| (*s).to_string()).collect(),
+                rest,
+            });
+        }
     }
 
     // Check for queue/tag commands (set/reset queue/tag)
@@ -943,10 +880,27 @@ fn collapse_spaces(input: &str) -> String {
     result
 }
 
+fn starts_with_command_prefix(input_lower: &str, prefix: &str) -> bool {
+    input_lower == prefix || input_lower.starts_with(&format!("{prefix} "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sqlparser::ast::{SetExpr, Statement};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn reference_command_fixture_paths() -> Vec<PathBuf> {
+        let base = Path::new("fixtures/dremio/reference-commands");
+        let mut files = fs::read_dir(base)
+            .expect("read fixtures/dremio/reference-commands")
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("sql"))
+            .collect::<Vec<_>>();
+        files.sort();
+        files
+    }
 
     #[test]
     fn parses_simple_select() {
@@ -1261,7 +1215,11 @@ FROM demoCatalog.reporting."tables"."orders" o
                     "expected relation alias metadata"
                 );
                 match stmt.as_ref() {
-                    Statement::CreateTable { query: Some(q), .. } => {
+                    Statement::CreateTable(create_table) => {
+                        let q = create_table
+                            .query
+                            .as_ref()
+                            .expect("expected CTAS query to be present");
                         assert!(matches!(
                             q.body.as_ref(),
                             SetExpr::Select(_) | SetExpr::Query(_)
@@ -1271,6 +1229,32 @@ FROM demoCatalog.reporting."tables"."orders" o
                 }
             }
             other => panic!("unexpected parsed statement: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_copy_into_without_table_keyword() {
+        let sql = "COPY INTO my_space.my_table FROM '@/files' FILE_FORMAT 'csv'";
+        let stmts = parse_sql(sql, DialectKind::Dremio).expect("parse copy into");
+        assert_eq!(stmts.len(), 1);
+        assert!(matches!(
+            stmts[0],
+            ParsedStatement::Command {
+                cmd: DremioCommand::TableMaintenance { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_all_dremio_reference_command_fixtures_in_strict_mode() {
+        let files = reference_command_fixture_paths();
+        assert_eq!(files.len(), 57, "expected 57 reference command fixtures");
+
+        for path in files {
+            let sql = fs::read_to_string(&path).expect("read fixture");
+            parse_sql_with_options(&sql, DialectKind::Dremio, ParseOptions { strict: true })
+                .unwrap_or_else(|err| panic!("strict parse failed for {:?}: {err}", path));
         }
     }
 }
