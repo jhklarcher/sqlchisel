@@ -17,6 +17,7 @@ Use `--dialect dremio` for Dremio SQL inputs and fixtures under `fixtures/dremio
 
 - Dremio-specific recognized keywords are case-formatted according to `keyword_case`
 - Version clauses are formatted as separate lines after the base `FROM` relation when present
+- Version clauses are preserved in top-level `SELECT` and in `SELECT` bodies for `CREATE TABLE AS`, `CREATE VIEW ... AS`, and `INSERT ... SELECT`
 - Quoted path segments are preserved (for example, source names with dots or dashes)
 - `TABLE(EXTERNAL_QUERY(...))` and similar table functions use nested formatting so inner queries remain readable
 
