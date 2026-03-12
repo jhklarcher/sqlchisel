@@ -36,6 +36,11 @@ Heuristics such as select-list thresholds and line-break preferences are documen
 - Single-quoted string literal contents are preserved as written, including doubled quotes and over-escaped forms.
 - Quoted identifier contents are not recased.
 
+## JOIN Token Preservation
+
+- `JOIN` stays `JOIN`.
+- `INNER JOIN` stays `INNER JOIN`.
+
 ## Parse Fallback vs Strict Mode
 
 Default behavior (`strict = false` / no `--strict`):

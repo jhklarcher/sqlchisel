@@ -1632,7 +1632,7 @@ WHERE NOT EXISTS (
         let out = format_str(sql, &cfg);
         assert_eq!(
             out.trim(),
-            "CREATE TABLE demoCatalog.reporting.\"tables\".orders_partitioned AS\n(\n  SELECT\n    o.id AS order_id,\n    CURRENT_TIMESTAMP AS sync_time,\n    o.order_number AS order_number,\n    co.site_id AS site_id,\n    s.brand_id AS brand_id,\n    s.country_id AS site_country_id,\n    o.created_at AS created_at,\n    COALESCE(dist.revenue_share, 0) AS distribution_amount,\n    CASE WHEN o.change_time IS NULL THEN 0 ELSE 1 END AS is_changed,\n    CASE WHEN o.cancel_time IS NULL THEN 0 ELSE 1 END AS is_canceled\n  FROM demoCatalog.reporting.\"tables\".\"orders\" o\n  INNER JOIN demoCatalog.reporting.\"tables\".\"cart_orders\" co\n    ON co.order_id = o.id\n  INNER JOIN demoCatalog.reporting.\"tables\".\"order_revenues\" orev\n    ON orev.order_id = o.id\n  INNER JOIN demoCatalog.reporting.\"tables\".\"sites\" s\n    ON s.id = co.site_id\n  LEFT JOIN (\n    SELECT\n      i.order_id,\n      SUM(i.revenue) AS revenue_share\n    FROM demoCatalog.reporting.\"tables\".\"order_revenue_items\" i\n    INNER JOIN demoCatalog.reporting.\"tables\".\"product_types\" pt\n      ON i.product_type_id = pt.id\n    WHERE pt.revenue_group_id = 17\n    GROUP BY i.order_id\n  ) dist\n    ON dist.order_id = o.id\n  WHERE NOT EXISTS\n      (\n        SELECT\n          1\n        FROM demoCatalog.reporting.\"tables\".\"order_items\" oi\n        INNER JOIN demoCatalog.reporting.\"tables\".\"customer_items\" ci\n          ON ci.id = oi.customer_item_id\n        WHERE oi.order_id = o.id\n          AND ci.product_type_id = 620\n      )\n    AND (o.is_test_order = FALSE)\n);"
+            "CREATE TABLE demoCatalog.reporting.\"tables\".orders_partitioned AS\n(\n  SELECT\n    o.id AS order_id,\n    CURRENT_TIMESTAMP AS sync_time,\n    o.order_number AS order_number,\n    co.site_id AS site_id,\n    s.brand_id AS brand_id,\n    s.country_id AS site_country_id,\n    o.created_at AS created_at,\n    COALESCE(dist.revenue_share, 0) AS distribution_amount,\n    CASE WHEN o.change_time IS NULL THEN 0 ELSE 1 END AS is_changed,\n    CASE WHEN o.cancel_time IS NULL THEN 0 ELSE 1 END AS is_canceled\n  FROM demoCatalog.reporting.\"tables\".\"orders\" o\n  JOIN demoCatalog.reporting.\"tables\".\"cart_orders\" co\n    ON co.order_id = o.id\n  JOIN demoCatalog.reporting.\"tables\".\"order_revenues\" orev\n    ON orev.order_id = o.id\n  JOIN demoCatalog.reporting.\"tables\".\"sites\" s\n    ON s.id = co.site_id\n  LEFT JOIN (\n    SELECT\n      i.order_id,\n      SUM(i.revenue) AS revenue_share\n    FROM demoCatalog.reporting.\"tables\".\"order_revenue_items\" i\n    JOIN demoCatalog.reporting.\"tables\".\"product_types\" pt\n      ON i.product_type_id = pt.id\n    WHERE pt.revenue_group_id = 17\n    GROUP BY i.order_id\n  ) dist\n    ON dist.order_id = o.id\n  WHERE NOT EXISTS\n      (\n        SELECT\n          1\n        FROM demoCatalog.reporting.\"tables\".\"order_items\" oi\n        JOIN demoCatalog.reporting.\"tables\".\"customer_items\" ci\n          ON ci.id = oi.customer_item_id\n        WHERE oi.order_id = o.id\n          AND ci.product_type_id = 620\n      )\n    AND (o.is_test_order = FALSE)\n);"
         );
     }
 
@@ -1906,6 +1906,18 @@ INSERT INTO a SELECT * FROM s.t AT BRANCH release AS OF TIMESTAMP '2025-01-01 00
     }
 
     #[test]
+    fn preserves_join_token_style() {
+        let cfg = FormatterConfig::default();
+        let sql =
+            "SELECT * FROM a JOIN b ON a.id = b.id;\nSELECT * FROM a INNER JOIN b ON a.id = b.id;";
+        let out = format_str(sql, &cfg);
+        assert_eq!(
+            out.trim(),
+            "SELECT *\nFROM a\nJOIN b\n  ON a.id = b.id;\n\nSELECT *\nFROM a\nINNER JOIN b\n  ON a.id = b.id;"
+        );
+    }
+
+    #[test]
     fn formats_insert_select() {
         let cfg = FormatterConfig::default();
         let sql = "INSERT INTO my_table SELECT a, b FROM source WHERE b > 0 GROUP BY a, b";
@@ -2041,7 +2053,7 @@ INSERT INTO a SELECT * FROM s.t AT BRANCH release AS OF TIMESTAMP '2025-01-01 00
         let out = format_str(sql, &cfg);
         assert_eq!(
             out.trim(),
-            "SELECT *\nFROM t\nINNER JOIN u\n  ON t.id = u.id\n  AND t.tenant = u.tenant"
+            "SELECT *\nFROM t\nJOIN u\n  ON t.id = u.id\n  AND t.tenant = u.tenant"
         );
     }
 
@@ -2274,7 +2286,7 @@ SELECT
   o.created_at AS order_created_at,
   COALESCE(MD5(c.email), '') AS email_hash
 FROM demoCatalog.sales.staging.analytics.orders o
-INNER JOIN demoCatalog.sales.staging.crm.customers c
+JOIN demoCatalog.sales.staging.crm.customers c
   ON c.order_id = o.id;"
         );
     }

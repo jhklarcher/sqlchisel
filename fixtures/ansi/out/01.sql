@@ -15,7 +15,7 @@ SELECT
     ORDER BY f.order_ts
   ) AS order_seq
 FROM analytics_space."fact_orders" f
-INNER JOIN analytics_space."dim_customers" c
+JOIN analytics_space."dim_customers" c
   ON c.customer_id = f.customer_id
 LEFT JOIN (
   SELECT
