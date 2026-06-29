@@ -109,6 +109,9 @@ pub(super) fn reattach_comments(
 
                 while let Some(c) = comment_iter.peek() {
                     if !c.inline_with_prev && c.index == non_ws_idx {
+                        if !out.is_empty() && !out.ends_with('\n') {
+                            out.push('\n');
+                        }
                         if !indent.is_empty() {
                             out.push_str(&indent);
                         }
@@ -175,6 +178,9 @@ pub(super) fn reattach_comments(
                 out.push_str(spacer);
                 out.push_str(&c.content);
             } else {
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
                 if !indent.is_empty() {
                     out.push_str(&indent);
                 }

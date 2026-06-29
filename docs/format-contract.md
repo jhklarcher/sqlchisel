@@ -56,8 +56,9 @@ Strict behavior (`strict = true` or `--strict`):
 
 ## Jinja Passthrough
 
-- If the input contains Jinja markers (`{{`, `{%`, or `{#`), `sqlchisel` currently returns the input unchanged.
+- By default, if the input contains Jinja markers (`{{`, `{%`, or `{#`), `sqlchisel` returns the input unchanged.
 - This passthrough behavior is part of the current stable contract to avoid corrupting templated SQL.
+- When `templating = "dbt"` or `--templating dbt` is enabled, dbt/Jinja tags are protected and restored while surrounding SQL is formatted.
 
 ## CLI Mode Contract
 

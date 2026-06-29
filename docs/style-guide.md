@@ -109,6 +109,12 @@ SELECT * FROM other;
 - Preserve string literal casing and contents
 - Preserve inline and block comments relative to nearby SQL where possible
 
+## dbt/Jinja Templates
+
+- Default templated SQL behavior is passthrough.
+- With `--templating dbt`, dbt/Jinja tags are preserved exactly while surrounding SQL is formatted where safe.
+- dbt templating support progress is tracked in [`dbt-support-plan.md`](dbt-support-plan.md).
+
 ## Future Tuning Areas
 
 - Numeric thresholds for select-list layout tiers

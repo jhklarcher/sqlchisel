@@ -23,6 +23,7 @@ line_length = 100
 indent_width = 2
 keyword_case = "upper"
 dialect = "ansi"
+templating = "passthrough"
 select_list_style = "auto"
 strict = false
 ```
@@ -33,6 +34,7 @@ strict = false
 - `indent_width` (`usize`): spaces per indent level. Default: `2`.
 - `keyword_case` (`"upper" | "lower" | "capitalize"`): keyword rendering. Default: `"upper"`.
 - `dialect` (`"ansi" | "dremio"`): parser/formatter dialect. Default: `"ansi"`.
+- `templating` (`"passthrough" | "dbt"`): template handling. Default: `"passthrough"`.
 - `select_list_style` (`"auto" | "per_line"`): select-list layout strategy. Default: `"auto"`.
 - `strict` (`bool`): fail on parse errors instead of raw fallback. Default: `false`.
 
@@ -44,5 +46,6 @@ These flags override config values for the current run:
 - `--indent-width`
 - `--keyword-case`
 - `--dialect`
+- `--templating`
 - `--select-list-style`
 - `--strict` (enables strict mode)
