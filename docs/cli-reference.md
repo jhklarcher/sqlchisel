@@ -26,6 +26,7 @@ Constraints:
 ## Common Flags
 
 - `--dialect <ansi|dremio>`
+- `--templating <passthrough|dbt>`
 - `--keyword-case <upper|lower|capitalize>`
 - `--line-length <N>`
 - `--indent-width <N>`
@@ -40,6 +41,8 @@ Constraints:
 When a provided path is a directory, `sqlchisel` recursively collects matching files.
 
 - Default include glob: `**/*.sql`
+- In `--templating dbt`, default include globs are `**/*.sql`, `**/*.sql.j2`,
+  `**/*.sql.jinja`, and `**/*.sql.jinja2`
 - `--include` overrides the default include list
 - `--exclude` filters paths out
 - Ignored directories during recursion: `.git`, `target`, `.cargo`

@@ -1,14 +1,15 @@
 #[derive(Clone)]
 pub(super) struct JinjaFragment {
-    placeholder: String,
+    token: String,
     content: String,
-    kind: JinjaKind,
+    replacement: JinjaReplacement,
 }
 
 #[derive(Clone, Copy)]
-enum JinjaKind {
-    Expr,
-    Block,
+enum JinjaReplacement {
+    Inline,
+    StandaloneLine,
+    BlockComment,
 }
 
 pub(super) fn contains_jinja_markers(input: &str) -> bool {
@@ -21,116 +22,43 @@ pub(super) fn preserve_jinja_expressions(input: &str) -> (String, Vec<JinjaFragm
     let bytes = input.as_bytes();
     let mut idx = 0usize;
 
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_line_comment = false;
-    let mut in_block_comment = 0usize;
-
     while idx < bytes.len() {
         let c = bytes[idx] as char;
 
-        if in_line_comment {
-            out.push(c);
-            if c == '\n' {
-                in_line_comment = false;
-            }
-            idx += 1;
-            continue;
-        }
-
-        if in_block_comment > 0 {
-            out.push(c);
-            if c == '/' && idx + 1 < bytes.len() && bytes[idx + 1] == b'*' {
-                in_block_comment += 1;
-            } else if c == '*' && idx + 1 < bytes.len() && bytes[idx + 1] == b'/' {
-                in_block_comment -= 1;
-            }
-            idx += 1;
-            continue;
-        }
-
-        if in_single {
-            out.push(c);
-            if c == '\'' {
-                in_single = false;
-            }
-            idx += 1;
-            continue;
-        }
-
-        if in_double {
-            out.push(c);
-            if c == '"' {
-                in_double = false;
-            }
-            idx += 1;
-            continue;
-        }
-
-        if c == '-' && idx + 1 < bytes.len() && bytes[idx + 1] == b'-' {
-            out.push_str("--");
-            idx += 2;
-            in_line_comment = true;
-            continue;
-        }
-        if c == '/' && idx + 1 < bytes.len() && bytes[idx + 1] == b'*' {
-            out.push_str("/*");
-            idx += 2;
-            in_block_comment = 1;
-            continue;
-        }
-
-        // Detect inline jinja expression {{ ... }} even if it spans multiple characters
         if idx + 1 < bytes.len() && bytes[idx] == b'{' && bytes[idx + 1] == b'{' {
             let start = idx;
-            idx += 2;
-            while idx + 1 < bytes.len() {
-                if bytes[idx] == b'}' && bytes[idx + 1] == b'}' {
-                    idx += 2;
-                    break;
-                }
-                idx += 1;
-            }
-            let raw = &input[start..idx];
-            let placeholder = format!("JINJA_EXPR_{}", frags.len());
-            frags.push(JinjaFragment {
-                placeholder: placeholder.clone(),
-                content: raw.to_string(),
-                kind: JinjaKind::Expr,
-            });
-            out.push_str(&placeholder);
+            let end = find_tag_end(input, idx + 2, b'}', b'}').unwrap_or(input.len());
+            push_fragment(input, start, end, &mut out, &mut frags, JinjaTagKind::Expr);
+            idx = end;
             continue;
         }
 
-        // Detect jinja block/comment tags and keep them as placeholders so we can reinsert later.
-        if idx + 1 < bytes.len()
-            && bytes[idx] == b'{'
-            && (bytes[idx + 1] == b'%' || bytes[idx + 1] == b'#')
-        {
+        if idx + 1 < bytes.len() && bytes[idx] == b'{' && bytes[idx + 1] == b'%' {
             let start = idx;
-            idx += 2;
-            while idx + 1 < bytes.len() {
-                if (bytes[idx] == b'%' || bytes[idx] == b'#') && bytes[idx + 1] == b'}' {
-                    idx += 2;
-                    break;
-                }
-                idx += 1;
-            }
-            let raw = &input[start..idx];
-            let placeholder = format!("JINJA_BLOCK_{}", frags.len());
-            frags.push(JinjaFragment {
-                placeholder: placeholder.clone(),
-                content: raw.to_string(),
-                kind: JinjaKind::Block,
-            });
-            out.push_str(&placeholder);
+            let first_end = find_tag_end(input, idx + 2, b'%', b'}').unwrap_or(input.len());
+            let end = if block_tag_name(&input[start..first_end]) == Some("raw") {
+                find_endraw_block(input, first_end).unwrap_or(input.len())
+            } else {
+                first_end
+            };
+            push_fragment(input, start, end, &mut out, &mut frags, JinjaTagKind::Block);
+            idx = end;
             continue;
         }
 
-        if c == '\'' {
-            in_single = true;
-        } else if c == '"' {
-            in_double = true;
+        if idx + 1 < bytes.len() && bytes[idx] == b'{' && bytes[idx + 1] == b'#' {
+            let start = idx;
+            let end = find_tag_end(input, idx + 2, b'#', b'}').unwrap_or(input.len());
+            push_fragment(
+                input,
+                start,
+                end,
+                &mut out,
+                &mut frags,
+                JinjaTagKind::Comment,
+            );
+            idx = end;
+            continue;
         }
 
         out.push(c);
@@ -142,21 +70,166 @@ pub(super) fn preserve_jinja_expressions(input: &str) -> (String, Vec<JinjaFragm
 
 pub(super) fn restore_jinja_expressions(mut output: String, frags: Vec<JinjaFragment>) -> String {
     for frag in frags {
-        match frag.kind {
-            JinjaKind::Expr => {
-                output = output.replace(&frag.placeholder, &frag.content);
+        match frag.replacement {
+            JinjaReplacement::Inline => {
+                output = output.replace(&frag.token, &frag.content);
             }
-            JinjaKind::Block => {
-                // Replace with optional leading whitespace trimmed so block tags return to column 0.
+            JinjaReplacement::StandaloneLine => {
                 let re = regex::Regex::new(&format!(
-                    "(?m)^\\s*{}\\s*$",
-                    regex::escape(&frag.placeholder)
+                    "(?m)^[ \\t]*--[ \\t]*{}[ \\t]*$",
+                    regex::escape(&frag.token)
                 ))
                 .expect("regex");
                 let replaced = re.replace_all(&output, frag.content.as_str()).into_owned();
-                output = replaced.replace(&frag.placeholder, &frag.content);
+                output = replaced.replace(&frag.token, &frag.content);
+            }
+            JinjaReplacement::BlockComment => {
+                let re = regex::Regex::new(&format!(
+                    r"/\*[ \t]*{}[ \t]*\*/",
+                    regex::escape(&frag.token)
+                ))
+                .expect("regex");
+                let replaced = re.replace_all(&output, frag.content.as_str()).into_owned();
+                output = replaced.replace(&frag.token, &frag.content);
             }
         }
     }
     output
+}
+
+#[derive(Clone, Copy)]
+enum JinjaTagKind {
+    Expr,
+    Block,
+    Comment,
+}
+
+fn push_fragment(
+    input: &str,
+    start: usize,
+    end: usize,
+    out: &mut String,
+    frags: &mut Vec<JinjaFragment>,
+    kind: JinjaTagKind,
+) {
+    let content = &input[start..end];
+    let token = match kind {
+        JinjaTagKind::Expr => format!("SQLCHISEL_JINJA_EXPR_{}__", frags.len()),
+        JinjaTagKind::Block => format!("SQLCHISEL_JINJA_BLOCK_{}__", frags.len()),
+        JinjaTagKind::Comment => format!("SQLCHISEL_JINJA_COMMENT_{}__", frags.len()),
+    };
+
+    let replacement = if is_standalone_line(input, start, end) {
+        out.push_str("-- ");
+        out.push_str(&token);
+        JinjaReplacement::StandaloneLine
+    } else if matches!(kind, JinjaTagKind::Comment) {
+        out.push_str("/* ");
+        out.push_str(&token);
+        out.push_str(" */");
+        JinjaReplacement::BlockComment
+    } else {
+        out.push_str(&token);
+        JinjaReplacement::Inline
+    };
+
+    frags.push(JinjaFragment {
+        token,
+        content: content.to_string(),
+        replacement,
+    });
+}
+
+fn is_standalone_line(input: &str, start: usize, end: usize) -> bool {
+    let before = input[..start]
+        .rsplit_once('\n')
+        .map(|(_, tail)| tail)
+        .unwrap_or(&input[..start]);
+    let after = input[end..]
+        .split_once('\n')
+        .map(|(head, _)| head)
+        .unwrap_or(&input[end..]);
+    before.trim().is_empty() && after.trim().is_empty()
+}
+
+fn find_tag_end(input: &str, mut idx: usize, close_a: u8, close_b: u8) -> Option<usize> {
+    let bytes = input.as_bytes();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    while idx + 1 < bytes.len() {
+        let b = bytes[idx];
+
+        if escaped {
+            escaped = false;
+            idx += 1;
+            continue;
+        }
+
+        if in_single {
+            if b == b'\\' {
+                escaped = true;
+            } else if b == b'\'' {
+                in_single = false;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if in_double {
+            if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_double = false;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if b == b'\'' {
+            in_single = true;
+            idx += 1;
+            continue;
+        }
+        if b == b'"' {
+            in_double = true;
+            idx += 1;
+            continue;
+        }
+        if b == close_a && bytes[idx + 1] == close_b {
+            return Some(idx + 2);
+        }
+
+        idx += 1;
+    }
+
+    None
+}
+
+fn find_endraw_block(input: &str, mut idx: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
+    while idx + 1 < bytes.len() {
+        if bytes[idx] == b'{' && bytes[idx + 1] == b'%' {
+            let end = find_tag_end(input, idx + 2, b'%', b'}')?;
+            if block_tag_name(&input[idx..end]) == Some("endraw") {
+                return Some(end);
+            }
+            idx = end;
+        } else {
+            idx += 1;
+        }
+    }
+    None
+}
+
+fn block_tag_name(raw: &str) -> Option<&str> {
+    let inner = raw.strip_prefix("{%")?.strip_suffix("%}")?;
+    let inner = inner
+        .trim()
+        .strip_prefix('-')
+        .unwrap_or(inner.trim())
+        .trim_start();
+    let inner = inner.strip_suffix('-').unwrap_or(inner).trim_end();
+    inner.split_whitespace().next()
 }

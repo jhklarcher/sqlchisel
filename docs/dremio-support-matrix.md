@@ -22,6 +22,7 @@ Reference export timestamp: 2026-02-28T14:20:54.462923+00:00
 - SQL statement formatter dispatch: [`src/format/sql/mod.rs`](../src/format/sql/mod.rs) (`format_statement`)
 - Dremio command formatter: [`src/format/sql/dremio.rs`](../src/format/sql/dremio.rs)
 - Regression fixtures: `fixtures/dremio/{in,expected,out}`
+- dbt/Jinja templating on Dremio: [`docs/dbt-support-plan.md`](dbt-support-plan.md)
 
 ## Coverage Matrix (57 Dremio Command Pages)
 

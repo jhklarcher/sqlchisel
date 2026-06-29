@@ -11,7 +11,7 @@ use regex::Regex;
 mod config;
 mod format;
 mod parser;
-use crate::config::{DialectKind, FormatterConfig, KeywordCase, SelectListStyle};
+use crate::config::{DialectKind, FormatterConfig, KeywordCase, SelectListStyle, TemplatingMode};
 use crate::format::sql::format_sql;
 use crate::parser::{parse_sql_with_options, ParseOptions, ParsedStatement};
 
@@ -51,6 +51,10 @@ struct Cli {
     /// Override dialect.
     #[arg(long, value_enum)]
     dialect: Option<DialectKind>,
+
+    /// Override templating mode.
+    #[arg(long, value_enum)]
+    templating: Option<TemplatingMode>,
 
     /// Override select list style.
     #[arg(long, value_enum)]
@@ -116,7 +120,8 @@ fn main() -> Result<()> {
             anyhow::bail!("no input provided; pass FILES or --stdin");
         }
 
-        let inputs = collect_input_files(&cli.files, &cli.include, &cli.exclude)?;
+        let inputs =
+            collect_input_files(&cli.files, &cli.include, &cli.exclude, config.templating)?;
 
         if inputs.is_empty() {
             anyhow::bail!("no input files found (looking for *.sql)");
@@ -173,6 +178,9 @@ fn apply_cli_overrides(config: &mut FormatterConfig, cli: &Cli) {
     if let Some(dialect) = cli.dialect {
         config.dialect = dialect;
     }
+    if let Some(templating) = cli.templating {
+        config.templating = templating;
+    }
     if let Some(select_list_style) = cli.select_list_style {
         config.select_list_style = select_list_style;
     }
@@ -221,10 +229,11 @@ fn collect_input_files(
     paths: &[PathBuf],
     includes: &[String],
     excludes: &[String],
+    templating: TemplatingMode,
 ) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let mut seen = HashSet::new();
-    let matcher = build_matchers(includes, excludes)?;
+    let matcher = build_matchers(includes, excludes, templating)?;
     for path in paths {
         gather_paths(path, &mut files, &mut seen, &matcher)?;
     }
@@ -279,9 +288,25 @@ fn is_ignored_dir(name: &str) -> bool {
     matches!(name, ".git" | "target" | ".cargo")
 }
 
-fn build_matchers(includes: &[String], excludes: &[String]) -> Result<GlobMatchers> {
+fn build_matchers(
+    includes: &[String],
+    excludes: &[String],
+    templating: TemplatingMode,
+) -> Result<GlobMatchers> {
     let include_patterns = if includes.is_empty() {
-        vec![glob_to_regex("**/*.sql")?]
+        let patterns = match templating {
+            TemplatingMode::Passthrough => vec!["**/*.sql"],
+            TemplatingMode::Dbt => vec![
+                "**/*.sql",
+                "**/*.sql.j2",
+                "**/*.sql.jinja",
+                "**/*.sql.jinja2",
+            ],
+        };
+        patterns
+            .into_iter()
+            .map(glob_to_regex)
+            .collect::<Result<Vec<_>>>()?
     } else {
         includes
             .iter()
@@ -447,5 +472,26 @@ fn handle_input(
                 Ok(false)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dbt_templating_adds_template_extensions_to_default_includes() {
+        let matcher = build_matchers(&[], &[], TemplatingMode::Dbt).expect("matcher");
+        assert!(matcher.matches(Path::new("models/orders.sql")));
+        assert!(matcher.matches(Path::new("models/orders.sql.j2")));
+        assert!(matcher.matches(Path::new("models/orders.sql.jinja")));
+        assert!(matcher.matches(Path::new("models/orders.sql.jinja2")));
+    }
+
+    #[test]
+    fn passthrough_templating_keeps_sql_only_default_include() {
+        let matcher = build_matchers(&[], &[], TemplatingMode::Passthrough).expect("matcher");
+        assert!(matcher.matches(Path::new("models/orders.sql")));
+        assert!(!matcher.matches(Path::new("models/orders.sql.jinja")));
     }
 }

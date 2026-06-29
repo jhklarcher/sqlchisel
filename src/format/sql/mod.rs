@@ -9,7 +9,7 @@ use sqlparser::ast::{
 };
 use sqlparser::dialect::{AnsiDialect, Dialect, GenericDialect};
 
-use crate::config::{DialectKind, FormatterConfig, KeywordCase};
+use crate::config::{DialectKind, FormatterConfig, KeywordCase, TemplatingMode};
 use crate::format::doc::Doc;
 use crate::format::printer::{format_doc, PrintConfig};
 use crate::parser::{parse_sql_with_options, DremioVersionClause, ParseOptions, ParsedStatement};
@@ -67,19 +67,19 @@ enum SelectLayout {
 }
 
 pub fn format_sql(input: &str, cfg: &FormatterConfig) -> Result<String> {
-    format_sql_impl(input, cfg, true)
-}
-
-fn format_sql_impl(input: &str, cfg: &FormatterConfig, allow_jinja_blocks: bool) -> Result<String> {
-    if allow_jinja_blocks && contains_jinja_markers(input) {
+    if cfg.templating == TemplatingMode::Passthrough && contains_jinja_markers(input) {
         return Ok(input.to_string());
     }
-    let comments = extract_comments(input, &cfg.dialect)?;
-    let (patched_input, jinja_exprs) = if allow_jinja_blocks {
+    format_sql_impl(input, cfg)
+}
+
+fn format_sql_impl(input: &str, cfg: &FormatterConfig) -> Result<String> {
+    let (patched_input, jinja_exprs) = if cfg.templating == TemplatingMode::Dbt {
         preserve_jinja_expressions(input)
     } else {
         (input.to_string(), Vec::new())
     };
+    let comments = extract_comments(&patched_input, &cfg.dialect)?;
     let (patched_input, literals) = preserve_string_literals(&patched_input);
     let stmts = parse_sql_with_options(
         &patched_input,
@@ -126,8 +126,8 @@ fn format_sql_impl(input: &str, cfg: &FormatterConfig, allow_jinja_blocks: bool)
     };
     let rendered = format_doc(&Doc::Concat(docs), &print_cfg);
     let restored = restore_string_literals(rendered, literals);
-    let restored = restore_jinja_expressions(restored, jinja_exprs);
-    reattach_comments(restored, comments, &cfg.dialect)
+    let restored = reattach_comments(restored, comments, &cfg.dialect)?;
+    Ok(restore_jinja_expressions(restored, jinja_exprs))
 }
 
 fn format_statement(
@@ -1436,7 +1436,7 @@ fn dialect_for_kind(kind: &DialectKind) -> Box<dyn Dialect> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{DialectKind, KeywordCase, SelectListStyle};
+    use crate::config::{DialectKind, KeywordCase, SelectListStyle, TemplatingMode};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -1453,6 +1453,36 @@ mod tests {
             .collect::<Vec<_>>();
         files.sort();
         files
+    }
+
+    fn fixture_paths(base: &str) -> Vec<PathBuf> {
+        let mut files = fs::read_dir(base)
+            .unwrap_or_else(|err| panic!("read {base}: {err}"))
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("sql"))
+            .collect::<Vec<_>>();
+        files.sort();
+        files
+    }
+
+    fn assert_fixture_matches(input_path: &Path, expected_path: &Path, cfg: &FormatterConfig) {
+        let input = fs::read_to_string(input_path).expect("read input fixture");
+        let expected = fs::read_to_string(expected_path).expect("read expected fixture");
+        let formatted = format_sql(&input, cfg)
+            .unwrap_or_else(|err| panic!("format failed for {:?}: {err}", input_path));
+        assert_eq!(
+            formatted.trim_end(),
+            expected.trim_end(),
+            "unexpected fixture output for {:?}",
+            input_path
+        );
+        let reformatted = format_sql(&formatted, cfg)
+            .unwrap_or_else(|err| panic!("reformat failed for {:?}: {err}", input_path));
+        assert_eq!(
+            reformatted, formatted,
+            "fixture output not idempotent for {:?}",
+            input_path
+        );
     }
 
     #[test]
@@ -2315,6 +2345,72 @@ WHERE order_date >= {{ start_date }}
 AND status <> 'CANCELLED'
 {% endif %}
 ;"
+        );
+    }
+
+    #[test]
+    fn formats_dbt_model_fixture() {
+        let cfg = FormatterConfig {
+            templating: TemplatingMode::Dbt,
+            ..Default::default()
+        };
+        assert_fixture_matches(
+            Path::new("fixtures/dbt/ansi/in/01_model.sql"),
+            Path::new("fixtures/dbt/ansi/expected/01_model.sql"),
+            &cfg,
+        );
+    }
+
+    #[test]
+    fn formats_dbt_dremio_incremental_fixture() {
+        let cfg = FormatterConfig {
+            dialect: DialectKind::Dremio,
+            templating: TemplatingMode::Dbt,
+            ..Default::default()
+        };
+        assert_fixture_matches(
+            Path::new("fixtures/dbt/dremio/in/01_incremental.sql"),
+            Path::new("fixtures/dbt/dremio/expected/01_incremental.sql"),
+            &cfg,
+        );
+    }
+
+    #[test]
+    fn formats_dbt_reference_syntax_idempotently() {
+        let cfg = FormatterConfig {
+            dialect: DialectKind::Dremio,
+            templating: TemplatingMode::Dbt,
+            ..Default::default()
+        };
+        for path in fixture_paths("fixtures/dbt/reference-syntax") {
+            let input = fs::read_to_string(&path).expect("read dbt reference fixture");
+            let formatted = format_sql(&input, &cfg)
+                .unwrap_or_else(|err| panic!("format failed for {:?}: {err}", path));
+            let reformatted = format_sql(&formatted, &cfg)
+                .unwrap_or_else(|err| panic!("reformat failed for {:?}: {err}", path));
+            assert_eq!(reformatted, formatted, "not idempotent for {:?}", path);
+        }
+    }
+
+    #[test]
+    fn preserves_dbt_tags_inside_strings_comments_and_raw_blocks() {
+        let cfg = FormatterConfig {
+            templating: TemplatingMode::Dbt,
+            ..Default::default()
+        };
+        let sql = "\
+{{ config(materialized=\"table\", post_hook=\"select 1; select 2\") }}
+SELECT '{{ var(\"literal\") }}' AS raw_template FROM {{ ref(\"orders\") }};
+-- depends_on: {{ ref(\"dim_orders\") }}
+{% raw %}{{ untouched }}{% endraw %}";
+        let out = format_str(sql, &cfg);
+        assert_eq!(
+            out.trim(),
+            "\
+{{ config(materialized=\"table\", post_hook=\"select 1; select 2\") }}
+SELECT '{{ var(\"literal\") }}' AS raw_template FROM {{ ref(\"orders\") }};
+-- depends_on: {{ ref(\"dim_orders\") }}
+{% raw %}{{ untouched }}{% endraw %}"
         );
     }
 

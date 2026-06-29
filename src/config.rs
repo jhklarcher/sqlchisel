@@ -17,6 +17,13 @@ pub enum DialectKind {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TemplatingMode {
+    Passthrough,
+    Dbt,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SelectListStyle {
     Auto,
@@ -30,6 +37,7 @@ pub struct FormatterConfig {
     pub indent_width: usize,
     pub keyword_case: KeywordCase,
     pub dialect: DialectKind,
+    pub templating: TemplatingMode,
     pub select_list_style: SelectListStyle,
     pub strict: bool,
 }
@@ -41,6 +49,7 @@ impl Default for FormatterConfig {
             indent_width: 2,
             keyword_case: KeywordCase::Upper,
             dialect: DialectKind::Ansi,
+            templating: TemplatingMode::Passthrough,
             select_list_style: SelectListStyle::Auto,
             strict: false,
         }

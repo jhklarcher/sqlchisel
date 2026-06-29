@@ -42,6 +42,7 @@ cat query.sql | sqlchisel --stdin --format
 - Formatting heuristics (non-contract): [`docs/style-guide.md`](docs/style-guide.md)
 - Dremio support notes: [`docs/dremio.md`](docs/dremio.md)
 - Dremio reference coverage tracker: [`docs/dremio-support-matrix.md`](docs/dremio-support-matrix.md)
+- dbt/Jinja support tracker: [`docs/dbt-support-plan.md`](docs/dbt-support-plan.md)
 - Editor integrations: [`docs/editor-integrations.md`](docs/editor-integrations.md)
 
 ## Contributing
